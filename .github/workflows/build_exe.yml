@@ -19,23 +19,27 @@ jobs:
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        # CPU Version von Torch (Platzsparend)
+        # CPU Version von Torch (Platzsparend & Kompatibel)
         pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
         pip install -r requirements.txt
         pip install pyinstaller
 
     - name: Build EXE with PyInstaller
-      # --onedir erstellt einen Ordner. Wir fügen src hinzu, aber NICHT resources/voices via add-data,
-      # da der User diese Ordner bearbeiten können muss!
+      # --onedir erstellt einen Ordner. Wir fügen src für interne Logik hinzu.
       run: |
         pyinstaller --noconfirm --onedir --windowed --name "LQAG" --add-data "src;src" src/main.py
 
-    - name: Copy Plugin and Resources to Build Folder
-      # Dieser Schritt ist NEU. Er kopiert deine Ordner in den fertigen "dist/LQAG" Ordner.
-      # xcopy Befehle: /E (Alle Unterordner), /I (Ziel ist Ordner), /Y (Überschreiben)
+    - name: Copy Assets to Distribution Folder
+      # Kopiert Plugin, Ressourcen und Anleitung zum fertigen Programm
       run: |
+        echo "Kopiere Ressourcen..."
         xcopy /E /I /Y "resources" "dist/LQAG/resources"
+        
+        echo "Kopiere Plugin..."
         xcopy /E /I /Y "LQAG_Plugin" "dist/LQAG/LQAG_Plugin"
+        
+        echo "Kopiere Anleitung..."
+        xcopy /Y "README.txt" "dist/LQAG/"
 
     - name: Upload Complete Artifact
       uses: actions/upload-artifact@v4
