@@ -23,23 +23,23 @@ jobs:
         # 1. Torch CPU Version
         pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
         
-        # 2. Requirements (TTS holt sich hier altes Numpy)
-        # WICHTIG: In requirements.txt darf KEIN "numpy" stehen!
+        # 2. Requirements
         pip install -r requirements.txt
         
-        # 3. Numpy Fix für PyInstaller
+        # 3. FIXES:
+        # Numpy Fix (DLL Fehler)
         pip install numpy==1.26.4 --upgrade --no-deps
+        # Inflect Fix (Source Code Fehler)
+        pip install inflect==5.6.0 --upgrade --no-deps
         
         # 4. PyInstaller
         pip install pyinstaller
 
     - name: Build EXE with PyInstaller
-      # Wir sammeln jetzt ALLES ein, was potenziell Daten nachlädt.
-      # TTS, trainer, coqpit: Für Configs & Versionen
-      # numpy, scipy: Für DLLs
-      # gruut: Für Sprachdaten (WICHTIG für Deutsch!)
+      # Wir sammeln weiterhin ALLES ein (TTS, trainer, gruut etc.)
       run: |
         pyinstaller --noconfirm --onedir --windowed --name "LQAG" --collect-all "TTS" --collect-all "numpy" --collect-all "trainer" --collect-all "coqpit" --collect-all "gruut" --collect-all "scipy" --add-data "src;src" src/main.py
+
     - name: Copy Assets to Distribution Folder
       shell: cmd
       run: |
