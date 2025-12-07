@@ -1,0 +1,13 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
+torchaudio
+TTS
+easyocr
+opencv-python
+pillow
+pygame
+keyboard
+pyautogui
+numpy
+tk
