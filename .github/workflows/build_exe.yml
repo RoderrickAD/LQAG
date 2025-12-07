@@ -23,27 +23,26 @@ jobs:
         # 1. Torch CPU Version
         pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
         
-        # 2. Requirements (TTS etc.)
+        # 2. Requirements
         pip install -r requirements.txt
         
         # 3. FIXES für die "Dependency Hell":
-        
-        # Numpy Fix (DLLs)
         pip install numpy==1.26.4 --upgrade --no-deps
-        
-        # Inflect Fix (Source Code Fehler)
         pip install inflect==5.6.0 --upgrade --no-deps
         
         # 4. PyInstaller
         pip install pyinstaller
 
-    - name: Build EXE with PyInstaller
-      # WIR SAMMELN JETZT ALLES:
-      # - jamo: Behebt den aktuellen Fehler (Koreanisch)
-      # - jieba: Behebt möglichen zukünftigen Fehler (Chinesisch)
-      # - Der Rest wie gehabt
+    - name: Extract TTS Models File
+      # Dieser Schritt ist NEU und KRITISCH.
+      # Wir suchen die versteckte Datei .models.json in der Installation und kopieren sie ins Arbeitsverzeichnis.
       run: |
-        pyinstaller --noconfirm --onedir --windowed --name "LQAG" --collect-all "TTS" --collect-all "numpy" --collect-all "trainer" --collect-all "coqpit" --collect-all "gruut" --collect-all "scipy" --collect-all "jamo" --collect-all "jieba" --add-data "src;src" src/main.py
+        python -c "import TTS, shutil, os; src = os.path.join(os.path.dirname(TTS.__file__), '.models.json'); dst = os.path.join(os.getcwd(), '.models.json'); shutil.copy(src, dst); print(f'Erfolgreich kopiert: {src} -> {dst}')"
+
+    - name: Build EXE with PyInstaller
+      # NEU: --add-data ".models.json;TTS" fügt die eben kopierte Datei an den richtigen Ort.
+      run: |
+        pyinstaller --noconfirm --onedir --windowed --name "LQAG" --collect-all "TTS" --collect-all "numpy" --collect-all "trainer" --collect-all "coqpit" --collect-all "gruut" --collect-all "scipy" --collect-all "jamo" --collect-all "jieba" --add-data "src;src" --add-data ".models.json;TTS" src/main.py
 
     - name: Copy Assets to Distribution Folder
       shell: cmd
