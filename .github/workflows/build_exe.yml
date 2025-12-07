@@ -34,11 +34,12 @@ jobs:
         pip install pyinstaller
 
     - name: Build EXE with PyInstaller
-      # NEU: --collect-all "trainer" hinzugefügt
-      # Das sammelt die fehlende VERSION Datei von trainer ein
+      # Wir sammeln jetzt ALLES ein, was potenziell Daten nachlädt.
+      # TTS, trainer, coqpit: Für Configs & Versionen
+      # numpy, scipy: Für DLLs
+      # gruut: Für Sprachdaten (WICHTIG für Deutsch!)
       run: |
-        pyinstaller --noconfirm --onedir --windowed --name "LQAG" --collect-all "TTS" --collect-all "numpy" --collect-all "trainer" --add-data "src;src" src/main.py
-
+        pyinstaller --noconfirm --onedir --windowed --name "LQAG" --collect-all "TTS" --collect-all "numpy" --collect-all "trainer" --collect-all "coqpit" --collect-all "gruut" --collect-all "scipy" --add-data "src;src" src/main.py
     - name: Copy Assets to Distribution Folder
       shell: cmd
       run: |
