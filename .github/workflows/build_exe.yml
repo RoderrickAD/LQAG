@@ -30,19 +30,21 @@ jobs:
         pyinstaller --noconfirm --onedir --windowed --name "LQAG" --add-data "src;src" src/main.py
 
     - name: Copy Assets to Distribution Folder
-      # Kopiert Plugin, Ressourcen und Anleitung zum fertigen Programm
+      shell: cmd
       run: |
-        echo "Kopiere Ressourcen..."
-        xcopy /E /I /Y "resources" "dist/LQAG/resources"
+        echo Kopiere Ressourcen...
+        xcopy /E /I /Y "resources" "dist\LQAG\resources"
         
-        echo "Kopiere Plugin..."
-        xcopy /E /I /Y "LQAG_Plugin" "dist/LQAG/LQAG_Plugin"
+        echo Kopiere Plugin...
+        xcopy /E /I /Y "LQAG_Plugin" "dist\LQAG\LQAG_Plugin"
         
-        echo "Kopiere Anleitung..."
-        xcopy /Y "README.txt" "dist/LQAG/"
+        echo Kopiere Anleitung...
+        xcopy /Y "README.txt" "dist\LQAG\"
 
     - name: Upload Complete Artifact
       uses: actions/upload-artifact@v4
       with:
         name: LQAG_Complete_Package
+        # Hier ist Slash / erlaubt, da die Upload-Action das versteht. 
+        # Nur xcopy (Windows CMD) braucht Backslash \
         path: dist/LQAG
