@@ -26,21 +26,20 @@ jobs:
         # 2. Requirements
         pip install -r requirements.txt
         
-        # 3. FIXES für die "Dependency Hell":
+        # 3. FIXES:
         pip install numpy==1.26.4 --upgrade --no-deps
         pip install inflect==5.6.0 --upgrade --no-deps
         
         # 4. PyInstaller
         pip install pyinstaller
 
-    - name: Extract TTS Models File
-      # Dieser Schritt ist NEU und KRITISCH.
-      # Wir suchen die versteckte Datei .models.json in der Installation und kopieren sie ins Arbeitsverzeichnis.
+    - name: Download Missing TTS Config
+      # Wir laden die fehlende .models.json Datei direkt vom offiziellen Coqui GitHub Repository
       run: |
-        python -c "import TTS, shutil, os; src = os.path.join(os.path.dirname(TTS.__file__), '.models.json'); dst = os.path.join(os.getcwd(), '.models.json'); shutil.copy(src, dst); print(f'Erfolgreich kopiert: {src} -> {dst}')"
+        python -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/coqui-ai/TTS/dev/TTS/.models.json', '.models.json'); print('Download von .models.json erfolgreich!')"
 
     - name: Build EXE with PyInstaller
-      # NEU: --add-data ".models.json;TTS" fügt die eben kopierte Datei an den richtigen Ort.
+      # --add-data ".models.json;TTS": Wir packen die heruntergeladene Datei manuell in den TTS Ordner
       run: |
         pyinstaller --noconfirm --onedir --windowed --name "LQAG" --collect-all "TTS" --collect-all "numpy" --collect-all "trainer" --collect-all "coqpit" --collect-all "gruut" --collect-all "scipy" --collect-all "jamo" --collect-all "jieba" --add-data "src;src" --add-data ".models.json;TTS" src/main.py
 
