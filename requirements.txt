@@ -2,8 +2,6 @@
 torch
 torchvision
 torchaudio
-# Wir erzwingen eine neuere NumPy Version, die ihre DLLs besser mitbringt
-numpy==1.26.4
 TTS
 easyocr
 opencv-python-headless
