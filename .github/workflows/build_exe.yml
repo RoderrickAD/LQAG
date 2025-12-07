@@ -19,11 +19,18 @@ jobs:
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        # CPU Version von Torch (Platzsparend & Kompatibel)
+        # 1. Installiere Torch CPU (Platzsparend)
         pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+        
+        # 2. Installiere den Rest (inkl. TTS und altem Numpy)
         pip install -r requirements.txt
+        
+        # 3. DER TRICK: Erzwinge Update auf Numpy 1.26.4 für PyInstaller
+        # Wir ignorieren hierbei, dass TTS meckert. Das funktioniert zur Laufzeit meist trotzdem.
+        pip install numpy==1.26.4 --upgrade --no-deps
+        
+        # PyInstaller installieren
         pip install pyinstaller
-
     - name: Build EXE with PyInstaller
       # --collect-all numpy zwingt PyInstaller, wirklich ALLES von Numpy mitzunehmen
       run: |
