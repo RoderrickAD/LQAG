@@ -7,6 +7,8 @@ import easyocr
 import logging
 import traceback
 from TTS.api import TTS
+# WICHTIG: Wir brauchen Zugriff auf den Manager, um ihn zu patchen
+from TTS.utils.manage import ModelManager 
 
 class Worker:
     def __init__(self):
@@ -17,29 +19,30 @@ class Worker:
     def load_tts_model(self):
         if self.tts is None:
             logging.info("--- Lade TTS Modell (XTTS v2) ---")
-            logging.info("Dies kann beim allerersten Start lange dauern (Download).")
+            logging.info("Dies kann beim allerersten Start lange dauern (Download ca. 1.5GB).")
             
             try:
-                # --- MONKEY PATCH START ---
-                # Wir zwingen TTS, die Config aus unserem resources Ordner zu laden
-                # statt im kaputten _internal Ordner zu suchen.
-                
-                # Wir suchen die Datei im 'resources' Ordner neben der EXE
+                # --- MONKEY PATCH 1: CONFIG PFAD ---
                 config_path = os.path.join(os.getcwd(), "resources", "models.json")
-                
                 if os.path.exists(config_path):
                     logging.info(f"PATCH: Nutze Config-Datei aus: {config_path}")
-                    
-                    # Wir überschreiben die Methode der Klasse, bevor wir sie nutzen
                     def patched_get_models_file_path(self):
                         return config_path
-                    
                     TTS.get_models_file_path = patched_get_models_file_path
                 else:
-                    logging.warning(f"PATCH FEHLGESCHLAGEN: {config_path} nicht gefunden! Versuche Standard...")
-                # --- MONKEY PATCH ENDE ---
+                    logging.warning(f"PATCH FEHLGESCHLAGEN: {config_path} nicht gefunden!")
 
-                # Jetzt ganz normal laden
+                # --- MONKEY PATCH 2: LIZENZ AUTO-AKZEPTIEREN ---
+                # Wir überschreiben die Funktion 'ask_tos', damit sie nicht nach Input fragt,
+                # sondern sofort "Ja" (True) zurückgibt.
+                logging.info("PATCH: Akzeptiere automatisch Coqui TTS Lizenz.")
+                def patched_ask_tos(self, output_path):
+                    return True # Immer Ja sagen
+                
+                ModelManager.ask_tos = patched_ask_tos
+                # -----------------------------------------------
+
+                # Jetzt laden (Der Download startet nun ohne Nachfrage)
                 self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to("cpu")
                 logging.info("✅ TTS Modell erfolgreich geladen und bereit!")
                 
@@ -90,7 +93,8 @@ class Worker:
             val1, loc1, w1, h1 = res_tl
             val2, loc2, w2, h2 = res_br
 
-            if val1 < 0.8 or val2 < 0.8:
+            # Etwas toleranter sein (0.7 statt 0.8) falls Screenshot leicht abweicht
+            if val1 < 0.7 or val2 < 0.7:
                 logging.warning(f"Ecken zu ungenau ({val1:.2f} / {val2:.2f}).")
                 return
 
