@@ -20,25 +20,24 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         
-        # 1. Torch CPU Version installieren (Spart Speicherplatz)
+        # 1. Torch CPU Version
         pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
         
-        # 2. Alle Requirements installieren (Lädt TTS mit altem Numpy 1.22)
-        # HINWEIS: Stelle sicher, dass in requirements.txt KEINE Zeile mit "numpy" steht!
+        # 2. Requirements (TTS holt sich hier altes Numpy)
+        # WICHTIG: In requirements.txt darf KEIN "numpy" stehen!
         pip install -r requirements.txt
         
-        # 3. DER FIX: Erzwinge Update auf Numpy 1.26.4 für PyInstaller
-        # Wir nutzen --no-deps, damit pip nicht wegen TTS Konflikten abbricht.
+        # 3. Numpy Fix für PyInstaller
         pip install numpy==1.26.4 --upgrade --no-deps
         
-        # 4. PyInstaller installieren
+        # 4. PyInstaller
         pip install pyinstaller
 
     - name: Build EXE with PyInstaller
-      # --collect-all "TTS": Nimmt die VERSION-Datei und Configs mit (behebt FileNotFoundError)
-      # --collect-all "numpy": Nimmt die DLLs mit (behebt ImportError)
+      # NEU: --collect-all "trainer" hinzugefügt
+      # Das sammelt die fehlende VERSION Datei von trainer ein
       run: |
-        pyinstaller --noconfirm --onedir --windowed --name "LQAG" --collect-all "TTS" --collect-all "numpy" --add-data "src;src" src/main.py
+        pyinstaller --noconfirm --onedir --windowed --name "LQAG" --collect-all "TTS" --collect-all "numpy" --collect-all "trainer" --add-data "src;src" src/main.py
 
     - name: Copy Assets to Distribution Folder
       shell: cmd
