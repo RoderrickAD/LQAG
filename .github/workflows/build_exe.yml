@@ -25,10 +25,9 @@ jobs:
         pip install pyinstaller
 
     - name: Build EXE with PyInstaller
-      # --onedir erstellt einen Ordner. Wir fügen src für interne Logik hinzu.
+      # --collect-all numpy zwingt PyInstaller, wirklich ALLES von Numpy mitzunehmen
       run: |
-        pyinstaller --noconfirm --onedir --windowed --name "LQAG" --add-data "src;src" src/main.py
-
+        pyinstaller --noconfirm --onedir --windowed --name "LQAG" --collect-all "numpy" --add-data "src;src" src/main.py
     - name: Copy Assets to Distribution Folder
       shell: cmd
       run: |
