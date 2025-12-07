@@ -1,87 +1,200 @@
 import tkinter as tk
-from tkinter import scrolledtext, filedialog
+from tkinter import scrolledtext, filedialog, messagebox
 import keyboard
 import os
 import threading
+import json
 from utils import setup_logger
 from worker import Worker
 from audio_player import AudioPlayer
 from voice_manager import VoiceManager
-from snipper import DynamicSnipper # <--- NEUER IMPORT
+from snipper import DynamicSnipper
 import logging
 
 class LQAGApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("LQAG v1.5 - Dynamic Window Support")
-        self.root.geometry("650x600")
+        self.root.title("LQAG v1.6 - Custom Hotkeys")
+        self.root.geometry("650x700") # Etwas höher für die Hotkey-Sektion
         
         self.style_bg = "#2b2b2b"
         self.style_fg = "#ffffff"
         self.style_accent = "#3a3a3a"
+        self.style_btn = "#505050"
         self.root.configure(bg=self.style_bg)
 
+        # Pfade
         self.resources_path = "resources"
         if not os.path.exists(self.resources_path): os.makedirs(self.resources_path)
+        self.settings_path = os.path.join(self.resources_path, "settings.json")
         
+        # Komponenten
         self.player = AudioPlayer()
         self.worker = Worker()
         self.voice_mgr = VoiceManager(self.resources_path)
         self.plugin_path = "" 
 
+        # --- HOTKEYS LADEN ---
+        # Standardwerte
+        self.hotkeys = {
+            "scan": "F9",
+            "pause": "F10",
+            "stop": "F11"
+        }
+        self.load_settings() # Überschreibt Standards falls Datei existiert
+
+        # GUI Bauen
         self.create_widgets()
+        
+        # Prozesse starten
         threading.Thread(target=self.worker.load_tts_model, daemon=True).start()
         
-        self.hotkey = "F9"
-        keyboard.add_hotkey(self.hotkey, self.trigger_scan)
+        # Plugin Überwachung
         self.check_plugin_file()
         
+        # Status Checks
         self.check_template_status()
+        
+        # Hotkeys aktivieren
+        self.register_hotkeys()
+        
+        logging.info("LQAG bereit. Drücke deine Hotkeys im Spiel!")
+
+    def load_settings(self):
+        """Lädt Hotkeys aus JSON Datei"""
+        if os.path.exists(self.settings_path):
+            try:
+                with open(self.settings_path, "r") as f:
+                    saved_keys = json.load(f)
+                    # Nur bekannte Keys updaten, um Müll zu vermeiden
+                    for k in self.hotkeys:
+                        if k in saved_keys:
+                            self.hotkeys[k] = saved_keys[k]
+            except Exception as e:
+                logging.error(f"Fehler beim Laden der Settings: {e}")
+
+    def save_settings(self):
+        """Speichert aktuelle Hotkeys in JSON"""
+        try:
+            with open(self.settings_path, "w") as f:
+                json.dump(self.hotkeys, f)
+            logging.info("Einstellungen gespeichert.")
+        except Exception as e:
+            logging.error(f"Fehler beim Speichern: {e}")
+
+    def register_hotkeys(self):
+        """Meldet die Hotkeys beim System an"""
+        # Erst alle alten entfernen, damit wir keine doppelten haben
+        try:
+            keyboard.unhook_all_hotkeys()
+        except:
+            pass # Falls noch keine da waren
+        
+        # Neue registrieren
+        try:
+            keyboard.add_hotkey(self.hotkeys["scan"], self.trigger_scan)
+            keyboard.add_hotkey(self.hotkeys["pause"], self.player.toggle_pause)
+            keyboard.add_hotkey(self.hotkeys["stop"], self.player.stop)
+            logging.info(f"Hotkeys aktiv: Scan=[{self.hotkeys['scan']}], Pause=[{self.hotkeys['pause']}], Stop=[{self.hotkeys['stop']}]")
+        except Exception as e:
+            logging.error(f"Fehler beim Registrieren der Hotkeys: {e}")
+
+    def rebind_key(self, action_name, button_ref):
+        """Startet den Prozess zum Neubelegen einer Taste"""
+        button_ref.config(text="Drücke Taste...", bg="orange", fg="black")
+        self.root.update()
+        
+        # Wir nutzen eine blockierende Funktion in einem Thread, damit GUI nicht einfriert?
+        # Nein, keyboard.read_hotkey() blockiert. Für einfache Config ist das ok,
+        # aber besser ist es, das UI kurz warten zu lassen.
+        
+        def wait_for_key():
+            try:
+                # Warten auf Tastendruck
+                key = keyboard.read_hotkey(suppress=False)
+                # Speichern
+                self.hotkeys[action_name] = key
+                self.save_settings()
+                
+                # UI Update (muss im Main Thread passieren, daher after)
+                self.root.after(0, lambda: self.finish_rebind(action_name, button_ref))
+            except Exception as e:
+                logging.error(f"Fehler beim Tastenlesen: {e}")
+                self.root.after(0, lambda: button_ref.config(text="Fehler", bg="red"))
+
+        # Starte den Listener im Hintergrund
+        threading.Thread(target=wait_for_key, daemon=True).start()
+
+    def finish_rebind(self, action_name, button_ref):
+        """Nach dem Tastendruck: UI Update und Reload"""
+        new_key = self.hotkeys[action_name]
+        button_ref.config(text=new_key.upper(), bg=self.style_btn, fg="white")
+        logging.info(f"Neue Taste für {action_name}: {new_key}")
+        
+        # Hotkeys neu laden
+        self.register_hotkeys()
 
     def create_widgets(self):
-        # ... (Header Code wie vorher) ...
-        # Nur der Setup Bereich ändert sich leicht im Text:
+        # HEADER
+        tk.Label(self.root, text="LQAG Controller", bg=self.style_bg, fg=self.style_fg, font=("Segoe UI", 12, "bold")).pack(pady=10)
         
         # --- SETUP ---
-        setup_frame = tk.LabelFrame(self.root, text="Einrichtung", bg=self.style_bg, fg="#aaaaaa")
+        setup_frame = tk.LabelFrame(self.root, text="1. Einrichtung", bg=self.style_bg, fg="#aaaaaa")
         setup_frame.pack(fill=tk.X, padx=10, pady=5)
-
-        self.btn_template = tk.Button(setup_frame, text="1. Fenster-Ecken definieren", command=self.start_snipping, bg="#d4af37", fg="black", bd=0, padx=10)
+        
+        self.btn_template = tk.Button(setup_frame, text="Fenster-Ecken definieren", command=self.start_snipping, bg="#d4af37", fg="black", bd=0, padx=10)
         self.btn_template.pack(side=tk.LEFT, padx=10, pady=10)
         
-        self.lbl_template_status = tk.Label(setup_frame, text="❌ Fehlt", bg=self.style_bg, fg="red")
+        self.lbl_template_status = tk.Label(setup_frame, text="Checking...", bg=self.style_bg, fg="#aaaaaa")
         self.lbl_template_status.pack(side=tk.LEFT, pady=10)
-        
-        # ... (Restlicher Code für Bridge, Controls, Log bleibt identisch wie v1.4) ...
-        # (Ich kürze hier ab, damit du nicht alles neu kopieren musst, der Rest ist gleich)
-        # Hier nur die wichtigen geänderten Funktionen:
 
         # --- BRIDGE ---
-        bridge_group = tk.LabelFrame(self.root, text="2. LOTRO Verbindung", bg=self.style_bg, fg="#aaaaaa", bd=1)
+        bridge_group = tk.LabelFrame(self.root, text="2. LOTRO Verbindung", bg=self.style_bg, fg="#aaaaaa")
         bridge_group.pack(fill=tk.X, padx=10, pady=5)
         self.lbl_plugin = tk.Label(bridge_group, text="Keine Plugin-Datei gewählt", bg=self.style_bg, fg="orange", wraplength=350, justify="left")
         self.lbl_plugin.pack(side=tk.LEFT, padx=10, pady=10)
         tk.Button(bridge_group, text="Datei wählen...", command=self.select_plugin_file, bg=self.style_accent, fg=self.style_fg, bd=0).pack(side=tk.RIGHT, padx=10, pady=10)
 
+        # --- TASTENBELEGUNG (NEU) ---
+        key_frame = tk.LabelFrame(self.root, text="3. Tastenbelegung (Klick zum Ändern)", bg=self.style_bg, fg="#aaaaaa")
+        key_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Grid Layout für die Tasten
+        tk.Label(key_frame, text="Vorlesen starten:", bg=self.style_bg, fg="#cccccc").grid(row=0, column=0, padx=10, pady=5, sticky="w")
+        self.btn_key_scan = tk.Button(key_frame, text=self.hotkeys["scan"], width=15, bg=self.style_btn, fg="white", bd=0,
+                                      command=lambda: self.rebind_key("scan", self.btn_key_scan))
+        self.btn_key_scan.grid(row=0, column=1, padx=10, pady=5)
+
+        tk.Label(key_frame, text="Pause / Weiter:", bg=self.style_bg, fg="#cccccc").grid(row=1, column=0, padx=10, pady=5, sticky="w")
+        self.btn_key_pause = tk.Button(key_frame, text=self.hotkeys["pause"], width=15, bg=self.style_btn, fg="white", bd=0,
+                                       command=lambda: self.rebind_key("pause", self.btn_key_pause))
+        self.btn_key_pause.grid(row=1, column=1, padx=10, pady=5)
+
+        tk.Label(key_frame, text="Stop (Abbruch):", bg=self.style_bg, fg="#cccccc").grid(row=2, column=0, padx=10, pady=5, sticky="w")
+        self.btn_key_stop = tk.Button(key_frame, text=self.hotkeys["stop"], width=15, bg=self.style_btn, fg="white", bd=0,
+                                      command=lambda: self.rebind_key("stop", self.btn_key_stop))
+        self.btn_key_stop.grid(row=2, column=1, padx=10, pady=5)
+
+
         # --- STATUS ---
         self.lbl_speaker = tk.Label(self.root, text="Aktueller NPC: Unbekannt", bg=self.style_bg, fg="#00ff00", font=("Segoe UI", 11, "bold"))
         self.lbl_speaker.pack(pady=5)
 
-        # --- CONTROLS ---
+        # --- MANUELLE STEUERUNG ---
         btn_frame = tk.Frame(self.root, bg=self.style_bg)
-        btn_frame.pack(fill=tk.X, padx=10, pady=10)
-        btn_opts = {'bg': self.style_accent, 'fg': self.style_fg, 'bd': 0, 'padx': 20, 'pady': 8}
-        self.btn_scan = tk.Button(btn_frame, text=f"▶ SCAN ({self.hotkey})", command=self.trigger_scan, **btn_opts)
-        self.btn_scan.pack(side=tk.LEFT, padx=(0, 5))
-        tk.Button(btn_frame, text="⏯ Pause", command=self.player.toggle_pause, **btn_opts).pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_frame, text="⏹ Stop", command=self.player.stop, **btn_opts).pack(side=tk.LEFT, padx=5)
+        btn_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Buttons haben keine Hotkeys im Text mehr, da diese variabel sind
+        tk.Button(btn_frame, text="▶ START", command=self.trigger_scan, bg=self.style_accent, fg="white", bd=0, padx=15, pady=5).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="⏯ PAUSE", command=self.player.toggle_pause, bg=self.style_accent, fg="white", bd=0, padx=15, pady=5).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="⏹ STOP", command=self.player.stop, bg=self.style_accent, fg="white", bd=0, padx=15, pady=5).pack(side=tk.LEFT, padx=5)
 
         # --- LOG ---
         self.log_area = scrolledtext.ScrolledText(self.root, state='disabled', bg="#1e1e1e", fg="#00ff00", font=("Consolas", 9), height=8)
         self.log_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         setup_logger(self.log_area)
 
-
+    # --- SNIPPER & LOGIC ---
     def start_snipping(self):
         self.root.iconify()
         DynamicSnipper(self.root, self.resources_path, self.on_snipping_done)
@@ -93,7 +206,6 @@ class LQAGApp:
             self.check_template_status()
 
     def check_template_status(self):
-        # Wir prüfen jetzt auf beide Dateien
         t1 = os.path.join(self.resources_path, "template_tl.png")
         t2 = os.path.join(self.resources_path, "template_br.png")
         if os.path.exists(t1) and os.path.exists(t2):
@@ -119,10 +231,9 @@ class LQAGApp:
                 self.lbl_speaker.config(text=f"Aktueller NPC: {self.voice_mgr.current_speaker}")
 
     def trigger_scan(self):
-        # Check ob Ecken da sind
-        t1 = os.path.join(self.resources_path, "template_tl.png")
-        if not os.path.exists(t1):
-            logging.error("KEINE DEFINITION! Bitte klicke erst auf 'Fenster-Ecken definieren'.")
+        # Prüfen ob Ecken da sind
+        if not os.path.exists(os.path.join(self.resources_path, "template_tl.png")):
+            logging.error("Keine Ecken definiert!")
             return
         
         voice_path = self.voice_mgr.get_voice_path()
@@ -130,7 +241,7 @@ class LQAGApp:
             logging.error("Keine Stimme gefunden.")
             return
 
-        # Wir übergeben jetzt den Ordner Pfad, nicht mehr das Bild
+        logging.info(f"Scan ausgelöst durch Hotkey...")
         self.worker.run_process(self.resources_path, voice_path, self.play_audio)
 
     def play_audio(self, p):
