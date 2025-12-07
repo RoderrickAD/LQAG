@@ -1,0 +1,11 @@
+xml version=1.0
+Plugin
+    Information
+        NameLQAG ReporterName
+        AuthorLQAG TeamAuthor
+        Version1.0Version
+        DescriptionExportiert den Namen des Ziels für TTS.Description
+    Information
+    PackageLQAG.MainPackage
+    Configuration Apartment=LQAG_Reporter 
+Plugin
