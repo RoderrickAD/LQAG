@@ -26,29 +26,38 @@ class VoiceManager:
             # Fallback auf Standard
             return os.path.join(self.voices_dir, self.default_voice)
 
-    def read_speaker_from_plugin(self, plugindata_path):
+def read_speaker_from_plugin(self, plugindata_path):
         """
         Liest die von LOTRO erzeugte .plugindata Datei.
-        LOTRO speichert Daten oft als Lua-Code: return "Gandalf"
+        Format ist meist: return { ["Target"] = "Name" };
         """
         if not os.path.exists(plugindata_path):
-            return
+            return False
 
         try:
+            # Datei öffnen (UTF-8 ist wichtig für Umlaute im Namen)
             with open(plugindata_path, "r", encoding="utf-8") as f:
                 content = f.read().strip()
                 
-            # Einfaches Parsen: Wir nehmen an, der Name steht im Text
-            # Oft steht in der Datei: return "Name"
-            if "return" in content:
-                # Entferne 'return', Anführungszeichen und Leerzeichen
-                clean_name = content.replace("return", "").replace('"', '').replace("'", "").strip()
+            # Wir suchen einfach nach dem String innerhalb der Anführungszeichen nach dem Gleichheitszeichen
+            # Quick & Dirty Parsing für Lua Table: ["Target"] = "NAME"
+            if '["Target"]' in content:
+                # Alles nach '["Target"]' holen
+                part = content.split('["Target"]')[1]
+                # Das erste was in Anführungszeichen steht, ist der Name
+                start_quote = part.find('"')
+                end_quote = part.find('"', start_quote + 1)
                 
-                if clean_name and clean_name != self.current_speaker:
-                    self.current_speaker = clean_name
-                    logging.info(f"🔁 Neuer Sprecher erkannt: {self.current_speaker}")
-                    return True # Sprecher hat sich geändert
+                if start_quote != -1 and end_quote != -1:
+                    clean_name = part[start_quote+1 : end_quote]
+                    
+                    if clean_name and clean_name != self.current_speaker:
+                        self.current_speaker = clean_name
+                        logging.info(f"🔁 Neuer NPC erkannt: {self.current_speaker}")
+                        return True
+                        
         except Exception as e:
-            logging.error(f"Fehler beim Lesen der Plugin-Daten: {e}")
+            # Fehler ignorieren, passiert manchmal wenn LOTRO gerade schreibt
+            pass
             
         return False
