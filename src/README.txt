@@ -1,4 +1,6 @@
-LQAG - LOTRO Voice Companion
+LQAG - Lokaler Quest Audio Generator
+----------------------------
+für LOTRO
 ----------------------------
 
 INSTALLATION:
