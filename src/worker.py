@@ -6,9 +6,16 @@ import pyautogui
 import easyocr
 import logging
 import traceback
+import sys  # WICHTIG
 from TTS.api import TTS
-# WICHTIG: Wir brauchen Zugriff auf den Manager, um ihn zu patchen
 from TTS.utils.manage import ModelManager 
+
+# --- HILFSKLASSE FÜR PYINSTALLER ---
+# Da wir keine Konsole haben, leiten wir Text-Ausgaben ins Leere um,
+# damit tqdm (Ladebalken) nicht abstürzt.
+class NullWriter:
+    def write(self, data): pass
+    def flush(self): pass
 
 class Worker:
     def __init__(self):
@@ -20,8 +27,15 @@ class Worker:
         if self.tts is None:
             logging.info("--- Lade TTS Modell (XTTS v2) ---")
             logging.info("Dies kann beim allerersten Start lange dauern (Download ca. 1.5GB).")
+            logging.info("Bitte Geduld haben, auch wenn keine Balken zu sehen sind!")
             
             try:
+                # --- FIX 1: SYSTEM STREAMS UMLEITEN ---
+                # Wenn sys.stdout/stderr None sind (kein Konsolenfenster),
+                # ersetzen wir sie durch unseren NullWriter.
+                if sys.stdout is None: sys.stdout = NullWriter()
+                if sys.stderr is None: sys.stderr = NullWriter()
+
                 # --- MONKEY PATCH 1: CONFIG PFAD ---
                 config_path = os.path.join(os.getcwd(), "resources", "models.json")
                 if os.path.exists(config_path):
@@ -33,17 +47,15 @@ class Worker:
                     logging.warning(f"PATCH FEHLGESCHLAGEN: {config_path} nicht gefunden!")
 
                 # --- MONKEY PATCH 2: LIZENZ AUTO-AKZEPTIEREN ---
-                # Wir überschreiben die Funktion 'ask_tos', damit sie nicht nach Input fragt,
-                # sondern sofort "Ja" (True) zurückgibt.
                 logging.info("PATCH: Akzeptiere automatisch Coqui TTS Lizenz.")
                 def patched_ask_tos(self, output_path):
-                    return True # Immer Ja sagen
-                
+                    return True 
                 ModelManager.ask_tos = patched_ask_tos
-                # -----------------------------------------------
 
-                # Jetzt laden (Der Download startet nun ohne Nachfrage)
-                self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to("cpu")
+                # --- STARTEN MIT PROGRESS_BAR=FALSE ---
+                # WICHTIG: progress_bar=False verhindert, dass tqdm versucht zu zeichnen
+                self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2", progress_bar=False).to("cpu")
+                
                 logging.info("✅ TTS Modell erfolgreich geladen und bereit!")
                 
             except Exception as e:
@@ -93,7 +105,6 @@ class Worker:
             val1, loc1, w1, h1 = res_tl
             val2, loc2, w2, h2 = res_br
 
-            # Etwas toleranter sein (0.7 statt 0.8) falls Screenshot leicht abweicht
             if val1 < 0.7 or val2 < 0.7:
                 logging.warning(f"Ecken zu ungenau ({val1:.2f} / {val2:.2f}).")
                 return
