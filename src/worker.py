@@ -9,7 +9,7 @@ import traceback
 import sys
 import torch
 import torchaudio
-import soundfile as sf # WICHTIG: Wir nutzen das direkt!
+import soundfile as sf
 
 # --- FIX 0: PYTORCH 2.6 KOMPATIBILITÄT ---
 _original_load = torch.load
@@ -19,34 +19,21 @@ def patched_torch_load(*args, **kwargs):
     return _original_load(*args, **kwargs)
 torch.load = patched_torch_load
 
-# --- FIX 3: AUDIO LOAD COMPLETELY REPLACED ---
-# Wir nutzen NICHT mehr torchaudio.load, weil es zwingend torchcodec will.
-# Wir lesen die Datei mit soundfile und wandeln sie manuell in einen Tensor um.
+# --- FIX 3: AUDIO BACKEND (NUKLEAR-OPTION) ---
 def manual_audio_load(filepath, *args, **kwargs):
-    # Lade Audio mit Soundfile (gibt numpy array zurück)
     data, samplerate = sf.read(filepath)
-    
-    # Soundfile gibt (Zeit, Kanäle) zurück. PyTorch will (Kanäle, Zeit).
-    # Wenn Mono (nur 1 Dimension), machen wir es 2D.
     if data.ndim == 1:
-        data = data.reshape(-1, 1) # (Zeit, 1)
-    
-    # Transponieren zu (Kanäle, Zeit)
+        data = data.reshape(-1, 1)
     data = data.T 
-    
-    # In Torch Tensor umwandeln (Float32)
     tensor = torch.from_numpy(data).float()
-    
     return tensor, samplerate
 
-# Wir überschreiben die Funktion im Modul hart.
 torchaudio.load = manual_audio_load
 # ---------------------------------------------
 
 from TTS.api import TTS
 from TTS.utils.manage import ModelManager 
 
-# --- HILFSKLASSE FÜR PYINSTALLER ---
 class NullWriter:
     def write(self, data): pass
     def flush(self): pass
@@ -54,35 +41,40 @@ class NullWriter:
 class Worker:
     def __init__(self):
         logging.info("Initialisiere EasyOCR...")
+        # EasyOCR nutzt automatisch GPU, wenn vorhanden
         self.reader = easyocr.Reader(['de'])
         self.tts = None
         
     def load_tts_model(self):
         if self.tts is None:
             logging.info("--- Lade TTS Modell (XTTS v2) ---")
-            logging.info("Dies kann beim allerersten Start lange dauern.")
             
+            # --- GPU CHECK ---
+            if torch.cuda.is_available():
+                device = "cuda"
+                logging.info("🚀 NVIDIA GPU gefunden! Aktiviere Turbo-Modus (CUDA).")
+            else:
+                device = "cpu"
+                logging.warning("⚠️ Keine GPU gefunden. Nutze CPU (Langsamer).")
+
             try:
-                # --- FIX 1: SYSTEM STREAMS UMLEITEN ---
+                # --- FIXES & PATCHES ---
                 if sys.stdout is None: sys.stdout = NullWriter()
                 if sys.stderr is None: sys.stderr = NullWriter()
 
-                # --- MONKEY PATCH 1: CONFIG PFAD ---
                 config_path = os.path.join(os.getcwd(), "resources", "models.json")
                 if os.path.exists(config_path):
                     logging.info(f"PATCH: Nutze Config-Datei aus: {config_path}")
-                    def patched_get_models_file_path(self):
-                        return config_path
+                    def patched_get_models_file_path(self): return config_path
                     TTS.get_models_file_path = patched_get_models_file_path
 
-                # --- MONKEY PATCH 2: LIZENZ AUTO-AKZEPTIEREN ---
-                def patched_ask_tos(self, output_path):
-                    return True 
+                def patched_ask_tos(self, output_path): return True 
                 ModelManager.ask_tos = patched_ask_tos
 
-                # --- STARTEN ---
-                self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2", progress_bar=False).to("cpu")
-                logging.info("✅ TTS Modell erfolgreich geladen und bereit!")
+                # --- STARTEN MIT GPU/CPU ---
+                self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2", progress_bar=False).to(device)
+                
+                logging.info(f"✅ TTS Modell erfolgreich geladen auf: {device.upper()}")
                 
             except Exception as e:
                 logging.critical(f"❌ FEHLER beim Laden des Modells: {e}")
@@ -117,15 +109,11 @@ class Worker:
                 h, w = templ.shape[:2]
                 res = cv2.matchTemplate(img, templ, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(res)
-                
-                # Zeichne Fundort für Debugging
                 cv2.rectangle(img, max_loc, (max_loc[0] + w, max_loc[1] + h), (0, 0, 255), 2)
                 return max_val, max_loc, w, h
 
             res_tl = find_template(sc, path_tl, "Top-Left")
             res_br = find_template(sc, path_br, "Bottom-Right")
-            
-            # Speichere das Bild mit den erkannten Ecken
             cv2.imwrite("debug_3_matches.png", sc)
 
             if not res_tl or not res_br:
@@ -136,7 +124,7 @@ class Worker:
             val2, loc2, w2, h2 = res_br
 
             if val1 < 0.7 or val2 < 0.7:
-                logging.warning(f"VORSICHT: Ecken sehr ungenau erkannt ({val1:.2f} / {val2:.2f}).")
+                logging.warning(f"Ecken unsicher ({val1:.2f} / {val2:.2f}).")
 
             x_start = loc1[0]
             y_start = loc1[1] + h1
@@ -144,7 +132,7 @@ class Worker:
             y_end = loc2[1]
 
             if x_end <= x_start or y_end <= y_start:
-                logging.error(f"FEHLER: Ungültiger Bereich (X:{x_start}-{x_end}, Y:{y_start}-{y_end})")
+                logging.error("FEHLER: Bereich ungültig.")
                 return
 
             roi = sc_raw.crop((x_start, y_start, x_end, y_end))
@@ -155,14 +143,14 @@ class Worker:
             text_list = self.reader.readtext(roi_np, detail=0, paragraph=True)
             full_text = " ".join(text_list)
             
-            logging.info(f"ERKANNT (Auszug): '{full_text[:100]}...'")
+            logging.info(f"ERKANNT: '{full_text[:50]}...'")
 
             if not full_text.strip():
                 logging.warning("Kein Text erkannt.")
                 return
 
             # TTS
-            logging.info(f"Generiere Audio mit: {os.path.basename(ref_audio)}")
+            logging.info(f"Generiere Audio...")
             out_path = "output_speech.wav"
             self.tts.tts_to_file(text=full_text, speaker_wav=ref_audio, language="de", file_path=out_path)
             
