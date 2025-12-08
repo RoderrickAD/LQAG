@@ -7,21 +7,24 @@ import easyocr
 import logging
 import traceback
 import sys
-import torch # WICHTIG: PyTorch importieren für den Fix
+import torch
+import torchaudio # WICHTIG: Importieren
 
 # --- FIX 0: PYTORCH 2.6 KOMPATIBILITÄT ---
-# PyTorch 2.6+ blockiert das Laden von XTTS Modellen aus Sicherheitsgründen.
-# Wir müssen 'weights_only=False' erzwingen.
 _original_load = torch.load
-
 def patched_torch_load(*args, **kwargs):
-    # Wenn der Parameter noch nicht gesetzt ist, setzen wir ihn auf False (Erlauben)
     if 'weights_only' not in kwargs:
         kwargs['weights_only'] = False
     return _original_load(*args, **kwargs)
-
 torch.load = patched_torch_load
-# -----------------------------------------
+
+# --- FIX 3: AUDIO BACKEND ---
+# Zwingt Torchaudio, die Standard-Bibliothek zu nutzen statt das fehlende 'torchcodec'
+try:
+    torchaudio.set_audio_backend("soundfile")
+except Exception as e:
+    logging.warning(f"Konnte Audio-Backend nicht setzen: {e}")
+# ----------------------------
 
 from TTS.api import TTS
 from TTS.utils.manage import ModelManager 
@@ -40,8 +43,7 @@ class Worker:
     def load_tts_model(self):
         if self.tts is None:
             logging.info("--- Lade TTS Modell (XTTS v2) ---")
-            logging.info("Dies kann beim allerersten Start lange dauern (Download ca. 1.5GB).")
-            logging.info("Bitte Geduld haben, auch wenn keine Balken zu sehen sind!")
+            logging.info("Dies kann beim allerersten Start lange dauern.")
             
             try:
                 # --- FIX 1: SYSTEM STREAMS UMLEITEN ---
@@ -55,19 +57,14 @@ class Worker:
                     def patched_get_models_file_path(self):
                         return config_path
                     TTS.get_models_file_path = patched_get_models_file_path
-                else:
-                    logging.warning(f"PATCH FEHLGESCHLAGEN: {config_path} nicht gefunden!")
 
                 # --- MONKEY PATCH 2: LIZENZ AUTO-AKZEPTIEREN ---
-                logging.info("PATCH: Akzeptiere automatisch Coqui TTS Lizenz.")
                 def patched_ask_tos(self, output_path):
                     return True 
                 ModelManager.ask_tos = patched_ask_tos
 
                 # --- STARTEN ---
-                # Da wir PyTorch oben gepatcht haben, wird das Laden jetzt funktionieren!
                 self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2", progress_bar=False).to("cpu")
-                
                 logging.info("✅ TTS Modell erfolgreich geladen und bereit!")
                 
             except Exception as e:
@@ -82,7 +79,7 @@ class Worker:
         logging.info("--- Starte Scan-Prozess ---")
         
         if self.tts is None:
-            logging.error("ABBRUCH: TTS Modell ist noch nicht geladen (Download läuft noch?).")
+            logging.error("ABBRUCH: TTS Modell ist noch nicht geladen.")
             return
 
         path_tl = os.path.join(res_path, "template_tl.png")
@@ -103,31 +100,37 @@ class Worker:
                 h, w = templ.shape[:2]
                 res = cv2.matchTemplate(img, templ, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                
+                # Zeichne Fundort für Debugging
                 cv2.rectangle(img, max_loc, (max_loc[0] + w, max_loc[1] + h), (0, 0, 255), 2)
                 return max_val, max_loc, w, h
 
             res_tl = find_template(sc, path_tl, "Top-Left")
             res_br = find_template(sc, path_br, "Bottom-Right")
+            
+            # Speichere das Bild mit den erkannten Ecken (WICHTIG ZUR KONTROLLE!)
             cv2.imwrite("debug_3_matches.png", sc)
 
             if not res_tl or not res_br:
-                logging.warning("Konnte Templates nicht finden (siehe debug_3_matches.png)")
+                logging.warning("Konnte Templates nicht finden.")
                 return
 
             val1, loc1, w1, h1 = res_tl
             val2, loc2, w2, h2 = res_br
 
+            # Wenn die Werte zu schlecht sind, warnen wir, machen aber weiter (zum Testen)
             if val1 < 0.7 or val2 < 0.7:
-                logging.warning(f"Ecken zu ungenau ({val1:.2f} / {val2:.2f}).")
-                return
+                logging.warning(f"VORSICHT: Ecken sehr ungenau erkannt ({val1:.2f} / {val2:.2f}).")
+                logging.warning("Ergebnis ist wahrscheinlich falsch (siehe debug_3_matches.png)")
 
             x_start = loc1[0]
             y_start = loc1[1] + h1
             x_end = loc2[0] + w2
             y_end = loc2[1]
 
+            # Plausibilitätsprüfung
             if x_end <= x_start or y_end <= y_start:
-                logging.error("FEHLER: Bereich ungültig (Ende vor Start).")
+                logging.error(f"FEHLER: Ungültiger Bereich (X:{x_start}-{x_end}, Y:{y_start}-{y_end})")
                 return
 
             roi = sc_raw.crop((x_start, y_start, x_end, y_end))
@@ -138,7 +141,7 @@ class Worker:
             text_list = self.reader.readtext(roi_np, detail=0, paragraph=True)
             full_text = " ".join(text_list)
             
-            logging.info(f"ERKANNT: '{full_text}'")
+            logging.info(f"ERKANNT (Auszug): '{full_text[:100]}...'")
 
             if not full_text.strip():
                 logging.warning("Kein Text erkannt.")
