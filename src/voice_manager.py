@@ -1,117 +1,105 @@
 import os
 import logging
-import random
+import re
 
 class VoiceManager:
-    def __init__(self, base_path):
-        self.base_path = base_path
-        
-        # Pfade definieren
-        self.path_specific = os.path.join(base_path, "voices", "specific")
-        self.path_male = os.path.join(base_path, "voices", "generic_male")
-        self.path_female = os.path.join(base_path, "voices", "generic_female")
-        self.file_db = os.path.join(base_path, "npc_list.txt")
-
+    def __init__(self, resources_path):
+        self.resources_path = resources_path
+        self.voices_path = os.path.join(resources_path, "voices")
         self.current_speaker = "Unbekannt"
         
-        # Datenbank für Geschlechter: {'Name': 'm', 'Name2': 'f'}
-        self.gender_map = {} 
-        self.load_gender_db()
+        # Mapping: NPC-Name -> Dateiname der Stimme
+        self.speaker_map = {}
+        
+        if not os.path.exists(self.voices_path):
+            os.makedirs(self.voices_path)
+            
+        self.refresh_voice_list()
 
-        # Cache für generische Dateien (damit wir nicht ständig die Festplatte scannen)
-        self.generic_m_files = self._scan_folder(self.path_male)
-        self.generic_f_files = self._scan_folder(self.path_female)
-
-    def _scan_folder(self, folder):
-        """Hilfsfunktion: Listet alle WAVs in einem Ordner auf"""
-        if not os.path.exists(folder):
-            os.makedirs(folder) # Erstellt Ordner falls er fehlt
-            return []
-        return [os.path.join(folder, f) for f in os.listdir(folder) if f.lower().endswith('.wav')]
-
-    def load_gender_db(self):
-        """Liest die Datei mit Format: Name[m] oder Name[f]"""
-        if not os.path.exists(self.file_db):
-            logging.warning(f"Keine NPC-Liste gefunden unter: {self.file_db}")
-            return
-
-        count = 0
+    def refresh_voice_list(self):
+        """Scanne den voices Ordner nach WAV Dateien"""
+        self.speaker_map = {}
         try:
-            with open(self.file_db, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line: continue
-                    
-                    # Format Parsen
-                    if "[m]" in line:
-                        name = line.replace("[m]", "").strip()
-                        self.gender_map[name] = "m"
-                        count += 1
-                    elif "[f]" in line:
-                        name = line.replace("[f]", "").strip()
-                        self.gender_map[name] = "f"
-                        count += 1
-            logging.info(f"NPC-Datenbank geladen: {count} Einträge gefunden.")
+            for file in os.listdir(self.voices_path):
+                if file.lower().endswith(".wav"):
+                    # Dateiname: "Gandalf.wav" -> Speaker: "Gandalf"
+                    name = os.path.splitext(file)[0]
+                    self.speaker_map[name.lower()] = os.path.join(self.voices_path, file)
         except Exception as e:
-            logging.error(f"Fehler beim Laden der NPC-Liste: {e}")
+            logging.error(f"Fehler beim Laden der Stimmen: {e}")
 
-    def get_voice_path(self, speaker_name=None):
-        if not speaker_name:
-            speaker_name = self.current_speaker
-
-        # Namen bereinigen für Dateisystem (keine Doppelpunkte etc.)
-        safe_name = "".join([c for c in speaker_name if c.isalnum() or c in (' ', '-', '_')]).strip()
-        
-        # 1. PRÜFUNG: Gibt es eine spezielle Datei für diesen NPC?
-        # Wir suchen in voices/specific/Name.wav
-        specific_file = os.path.join(self.path_specific, f"{safe_name}.wav")
-        if os.path.exists(specific_file):
-            logging.info(f"Spezifische Stimme gefunden für: {speaker_name}")
-            return specific_file
-
-        # 2. PRÜFUNG: Geschlecht bestimmen
-        # Wir schauen in die geladene Liste
-        gender = self.gender_map.get(speaker_name, "unknown") # Default ist unknown
-
-        target_pool = []
-        
-        if gender == "m":
-            target_pool = self.generic_m_files
-            logging.info(f"Geschlecht erkannt: MÄNNLICH ({speaker_name})")
-        elif gender == "f":
-            target_pool = self.generic_f_files
-            logging.info(f"Geschlecht erkannt: WEIBLICH ({speaker_name})")
-        else:
-            # Wenn unbekannt, werfen wir beide Pools zusammen oder nehmen Männer (im Zweifel oft passender bei Orks/Zwergen)
-            target_pool = self.generic_m_files + self.generic_f_files
-            logging.info(f"Geschlecht unbekannt für '{speaker_name}'. Wähle zufällig.")
-
-        # 3. ZUFALLSWAHL
-        if target_pool:
-            chosen_voice = random.choice(target_pool)
-            # Nur den Dateinamen loggen, nicht den ganzen Pfad, der Übersicht halber
-            logging.info(f"-> Zufällige Stimme gewählt: {os.path.basename(chosen_voice)}")
-            return chosen_voice
-        else:
-            logging.error("Keine generischen Stimmen gefunden! Bitte WAVs in generic_male/female legen.")
-            return None
-
-    def read_speaker_from_plugin(self, plugindata_path):
-        """(Dieser Teil bleibt gleich wie vorher, aber ich füge ihn der Vollständigkeit halber ein)"""
-        if not os.path.exists(plugindata_path):
-            return False
+    def read_speaker_from_plugin(self, filepath):
+        """
+        Liest den aktuellen NPC-Namen.
+        Unterstützt jetzt:
+        1. Script.log (Liest die letzte Zeile)
+        2. .plugindata (Liest XML/Lua Struktur)
+        """
         try:
-            with open(plugindata_path, "r", encoding="utf-8") as f:
-                content = f.read().strip()
-            if '["Target"]' in content:
-                part = content.split('["Target"]')[1]
-                start = part.find('"')
-                end = part.find('"', start + 1)
-                if start != -1 and end != -1:
-                    clean_name = part[start+1 : end]
-                    if clean_name and clean_name != self.current_speaker:
-                        self.current_speaker = clean_name
-                        logging.info(f"🔁 Neuer NPC: {self.current_speaker}")
+            if not os.path.exists(filepath):
+                return False
+
+            # --- LOGIK FÜR SCRIPT.LOG ---
+            if filepath.endswith(".log"):
+                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+                    if lines:
+                        # Die letzte Zeile holen und aufräumen (Leerzeichen/Umbruch weg)
+                        last_line = lines[-1].strip()
+                        if last_line:
+                            # Manchmal steht Zeitstempel davor, wir nehmen die ganze Zeile als Name
+                            # oder filtern, falls nötig. Für jetzt: Roher Text.
+                            self.current_speaker = last_line
+                            return True
+                return False
+            
+            # --- ALTE LOGIK FÜR .PLUGINDATA ---
+            else:
+                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                    
+                    # Suche nach dem Namen im Lua/XML Format
+                    # Muster: ["Name"] = "Gandalf"  ODER  <Name>Gandalf</Name>
+                    match = re.search(r'\["Name"\]\s*=\s*"(.*?)"', content)
+                    if not match:
+                         match = re.search(r'<Name>(.*?)</Name>', content)
+                    
+                    if match:
+                        self.current_speaker = match.group(1)
                         return True
-        except: pass
+                        
+        except Exception as e:
+            logging.error(f"Fehler beim Lesen der Datei: {e}")
+            
         return False
+
+    def get_voice_path(self):
+        """
+        Gibt den Pfad zur WAV-Datei für den aktuellen Sprecher zurück.
+        Wenn keine spezielle Stimme da ist, wähle eine zufällige (oder Standard).
+        """
+        name_key = self.current_speaker.lower()
+        
+        # 1. Volltreffer? (z.B. "Gandalf" gefunden)
+        if name_key in self.speaker_map:
+            logging.info(f"Stimme gefunden für '{self.current_speaker}': {os.path.basename(self.speaker_map[name_key])}")
+            return self.speaker_map[name_key]
+        
+        # 2. Teil-Treffer? (z.B. "Ork-Krieger" -> Nutze "Ork.wav")
+        for key, path in self.speaker_map.items():
+            if key in name_key:
+                logging.info(f"Ähnliche Stimme gefunden ({key}) für '{self.current_speaker}'")
+                return path
+
+        # 3. Fallback: Zufällige Stimme aus dem Ordner nehmen
+        # (Damit es nicht immer gleich klingt, wenn wir den NPC nicht kennen)
+        import random
+        all_voices = list(self.speaker_map.values())
+        if all_voices:
+            logging.info(f"Geschlecht unbekannt für '{self.current_speaker}'. Wähle zufällig.")
+            chosen = random.choice(all_voices)
+            logging.info(f"-> Zufällige Stimme gewählt: {os.path.basename(chosen)}")
+            return chosen
+            
+        logging.warning("Keine Stimmen im 'resources/voices' Ordner gefunden!")
+        return None
