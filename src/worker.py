@@ -8,7 +8,8 @@ import logging
 import traceback
 import sys
 import torch
-import torchaudio # WICHTIG
+import torchaudio
+import soundfile as sf # WICHTIG: Wir nutzen das direkt!
 
 # --- FIX 0: PYTORCH 2.6 KOMPATIBILITÄT ---
 _original_load = torch.load
@@ -18,17 +19,29 @@ def patched_torch_load(*args, **kwargs):
     return _original_load(*args, **kwargs)
 torch.load = patched_torch_load
 
-# --- FIX 3: AUDIO BACKEND (AGGRESSIV) ---
-# Wir überschreiben die Lade-Funktion, um "soundfile" zu erzwingen.
-# Das verhindert, dass torchaudio nach dem fehlenden 'torchcodec' sucht.
-_original_audio_load = torchaudio.load
-def patched_audio_load(*args, **kwargs):
-    # Wir zwingen das Backend auf 'soundfile'
-    kwargs['backend'] = 'soundfile'
-    return _original_audio_load(*args, **kwargs)
+# --- FIX 3: AUDIO LOAD COMPLETELY REPLACED ---
+# Wir nutzen NICHT mehr torchaudio.load, weil es zwingend torchcodec will.
+# Wir lesen die Datei mit soundfile und wandeln sie manuell in einen Tensor um.
+def manual_audio_load(filepath, *args, **kwargs):
+    # Lade Audio mit Soundfile (gibt numpy array zurück)
+    data, samplerate = sf.read(filepath)
+    
+    # Soundfile gibt (Zeit, Kanäle) zurück. PyTorch will (Kanäle, Zeit).
+    # Wenn Mono (nur 1 Dimension), machen wir es 2D.
+    if data.ndim == 1:
+        data = data.reshape(-1, 1) # (Zeit, 1)
+    
+    # Transponieren zu (Kanäle, Zeit)
+    data = data.T 
+    
+    # In Torch Tensor umwandeln (Float32)
+    tensor = torch.from_numpy(data).float()
+    
+    return tensor, samplerate
 
-torchaudio.load = patched_audio_load
-# ----------------------------
+# Wir überschreiben die Funktion im Modul hart.
+torchaudio.load = manual_audio_load
+# ---------------------------------------------
 
 from TTS.api import TTS
 from TTS.utils.manage import ModelManager 
@@ -105,12 +118,14 @@ class Worker:
                 res = cv2.matchTemplate(img, templ, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(res)
                 
-                # Zeichne Fundort
+                # Zeichne Fundort für Debugging
                 cv2.rectangle(img, max_loc, (max_loc[0] + w, max_loc[1] + h), (0, 0, 255), 2)
                 return max_val, max_loc, w, h
 
             res_tl = find_template(sc, path_tl, "Top-Left")
             res_br = find_template(sc, path_br, "Bottom-Right")
+            
+            # Speichere das Bild mit den erkannten Ecken
             cv2.imwrite("debug_3_matches.png", sc)
 
             if not res_tl or not res_br:
@@ -140,7 +155,7 @@ class Worker:
             text_list = self.reader.readtext(roi_np, detail=0, paragraph=True)
             full_text = " ".join(text_list)
             
-            logging.info(f"ERKANNT: '{full_text[:50]}...'")
+            logging.info(f"ERKANNT (Auszug): '{full_text[:100]}...'")
 
             if not full_text.strip():
                 logging.warning("Kein Text erkannt.")
