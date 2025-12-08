@@ -8,7 +8,7 @@ import logging
 import traceback
 import sys
 import torch
-import torchaudio # WICHTIG: Importieren
+import torchaudio # WICHTIG
 
 # --- FIX 0: PYTORCH 2.6 KOMPATIBILITÄT ---
 _original_load = torch.load
@@ -18,12 +18,16 @@ def patched_torch_load(*args, **kwargs):
     return _original_load(*args, **kwargs)
 torch.load = patched_torch_load
 
-# --- FIX 3: AUDIO BACKEND ---
-# Zwingt Torchaudio, die Standard-Bibliothek zu nutzen statt das fehlende 'torchcodec'
-try:
-    torchaudio.set_audio_backend("soundfile")
-except Exception as e:
-    logging.warning(f"Konnte Audio-Backend nicht setzen: {e}")
+# --- FIX 3: AUDIO BACKEND (AGGRESSIV) ---
+# Wir überschreiben die Lade-Funktion, um "soundfile" zu erzwingen.
+# Das verhindert, dass torchaudio nach dem fehlenden 'torchcodec' sucht.
+_original_audio_load = torchaudio.load
+def patched_audio_load(*args, **kwargs):
+    # Wir zwingen das Backend auf 'soundfile'
+    kwargs['backend'] = 'soundfile'
+    return _original_audio_load(*args, **kwargs)
+
+torchaudio.load = patched_audio_load
 # ----------------------------
 
 from TTS.api import TTS
@@ -101,14 +105,12 @@ class Worker:
                 res = cv2.matchTemplate(img, templ, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(res)
                 
-                # Zeichne Fundort für Debugging
+                # Zeichne Fundort
                 cv2.rectangle(img, max_loc, (max_loc[0] + w, max_loc[1] + h), (0, 0, 255), 2)
                 return max_val, max_loc, w, h
 
             res_tl = find_template(sc, path_tl, "Top-Left")
             res_br = find_template(sc, path_br, "Bottom-Right")
-            
-            # Speichere das Bild mit den erkannten Ecken (WICHTIG ZUR KONTROLLE!)
             cv2.imwrite("debug_3_matches.png", sc)
 
             if not res_tl or not res_br:
@@ -118,17 +120,14 @@ class Worker:
             val1, loc1, w1, h1 = res_tl
             val2, loc2, w2, h2 = res_br
 
-            # Wenn die Werte zu schlecht sind, warnen wir, machen aber weiter (zum Testen)
             if val1 < 0.7 or val2 < 0.7:
                 logging.warning(f"VORSICHT: Ecken sehr ungenau erkannt ({val1:.2f} / {val2:.2f}).")
-                logging.warning("Ergebnis ist wahrscheinlich falsch (siehe debug_3_matches.png)")
 
             x_start = loc1[0]
             y_start = loc1[1] + h1
             x_end = loc2[0] + w2
             y_end = loc2[1]
 
-            # Plausibilitätsprüfung
             if x_end <= x_start or y_end <= y_start:
                 logging.error(f"FEHLER: Ungültiger Bereich (X:{x_start}-{x_end}, Y:{y_start}-{y_end})")
                 return
@@ -141,7 +140,7 @@ class Worker:
             text_list = self.reader.readtext(roi_np, detail=0, paragraph=True)
             full_text = " ".join(text_list)
             
-            logging.info(f"ERKANNT (Auszug): '{full_text[:100]}...'")
+            logging.info(f"ERKANNT: '{full_text[:50]}...'")
 
             if not full_text.strip():
                 logging.warning("Kein Text erkannt.")
