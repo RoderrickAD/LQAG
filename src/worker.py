@@ -6,13 +6,27 @@ import pyautogui
 import easyocr
 import logging
 import traceback
-import sys  # WICHTIG
+import sys
+import torch # WICHTIG: PyTorch importieren für den Fix
+
+# --- FIX 0: PYTORCH 2.6 KOMPATIBILITÄT ---
+# PyTorch 2.6+ blockiert das Laden von XTTS Modellen aus Sicherheitsgründen.
+# Wir müssen 'weights_only=False' erzwingen.
+_original_load = torch.load
+
+def patched_torch_load(*args, **kwargs):
+    # Wenn der Parameter noch nicht gesetzt ist, setzen wir ihn auf False (Erlauben)
+    if 'weights_only' not in kwargs:
+        kwargs['weights_only'] = False
+    return _original_load(*args, **kwargs)
+
+torch.load = patched_torch_load
+# -----------------------------------------
+
 from TTS.api import TTS
 from TTS.utils.manage import ModelManager 
 
 # --- HILFSKLASSE FÜR PYINSTALLER ---
-# Da wir keine Konsole haben, leiten wir Text-Ausgaben ins Leere um,
-# damit tqdm (Ladebalken) nicht abstürzt.
 class NullWriter:
     def write(self, data): pass
     def flush(self): pass
@@ -31,8 +45,6 @@ class Worker:
             
             try:
                 # --- FIX 1: SYSTEM STREAMS UMLEITEN ---
-                # Wenn sys.stdout/stderr None sind (kein Konsolenfenster),
-                # ersetzen wir sie durch unseren NullWriter.
                 if sys.stdout is None: sys.stdout = NullWriter()
                 if sys.stderr is None: sys.stderr = NullWriter()
 
@@ -52,8 +64,8 @@ class Worker:
                     return True 
                 ModelManager.ask_tos = patched_ask_tos
 
-                # --- STARTEN MIT PROGRESS_BAR=FALSE ---
-                # WICHTIG: progress_bar=False verhindert, dass tqdm versucht zu zeichnen
+                # --- STARTEN ---
+                # Da wir PyTorch oben gepatcht haben, wird das Laden jetzt funktionieren!
                 self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2", progress_bar=False).to("cpu")
                 
                 logging.info("✅ TTS Modell erfolgreich geladen und bereit!")
