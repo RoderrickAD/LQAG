@@ -200,11 +200,20 @@ class LQAGApp:
             self.lbl_template_status.config(text="❌ Einrichtung nötig", fg="red")
 
     def select_plugin_file(self):
-        initial = os.path.expanduser("~/Documents/The Lord of the Rings Online/PluginData")
-        path = filedialog.askopenfilename(initialdir=initial, title="Wähle LQAG_Data.plugindata", filetypes=[("Plugin Data", "*.plugindata")])
+        # Wir starten direkt im LOTRO Dokumente Ordner
+        initial = os.path.expanduser("~/Documents/The Lord of the Rings Online")
+        
+        # Jetzt erlauben wir .log Dateien (für Script.log) UND .plugindata (falls man es doch mal braucht)
+        path = filedialog.askopenfilename(
+            initialdir=initial, 
+            title="Wähle Script.log oder PluginData", 
+            filetypes=[("LOTRO Log", "Script.log"), ("Plugin Data", "*.plugindata"), ("Alle Dateien", "*.*")]
+        )
+        
         if path:
             self.plugin_path = path
-            self.lbl_plugin.config(text=f".../{os.path.basename(path)}", fg="#00ff00")
+            filename = os.path.basename(path)
+            self.lbl_plugin.config(text=f".../{filename}", fg="#00ff00")
             self.check_plugin_file_once()
 
     def check_plugin_file(self):
