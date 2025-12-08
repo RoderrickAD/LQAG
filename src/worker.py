@@ -10,6 +10,8 @@ import sys
 import torch
 import torchaudio
 import soundfile as sf
+import time  # NEU
+import glob  # NEU: Zum Aufräumen alter Dateien
 
 # --- FIX 0: PYTORCH 2.6 KOMPATIBILITÄT ---
 _original_load = torch.load
@@ -41,7 +43,6 @@ class NullWriter:
 class Worker:
     def __init__(self):
         logging.info("Initialisiere EasyOCR...")
-        # EasyOCR nutzt automatisch GPU, wenn vorhanden
         self.reader = easyocr.Reader(['de'])
         self.tts = None
         
@@ -55,7 +56,7 @@ class Worker:
                 logging.info("🚀 NVIDIA GPU gefunden! Aktiviere Turbo-Modus (CUDA).")
             else:
                 device = "cpu"
-                logging.warning("⚠️ Keine GPU gefunden. Nutze CPU (Langsamer).")
+                logging.warning("⚠️ Keine GPU gefunden. Nutze CPU.")
 
             try:
                 # --- FIXES & PATCHES ---
@@ -71,7 +72,6 @@ class Worker:
                 def patched_ask_tos(self, output_path): return True 
                 ModelManager.ask_tos = patched_ask_tos
 
-                # --- STARTEN MIT GPU/CPU ---
                 self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2", progress_bar=False).to(device)
                 
                 logging.info(f"✅ TTS Modell erfolgreich geladen auf: {device.upper()}")
@@ -90,6 +90,17 @@ class Worker:
         if self.tts is None:
             logging.error("ABBRUCH: TTS Modell ist noch nicht geladen.")
             return
+            
+        # --- CLEANUP: Alte WAV Dateien löschen, um Platz zu sparen ---
+        try:
+            for old_file in glob.glob("output_speech_*.wav"):
+                try:
+                    os.remove(old_file)
+                except:
+                    pass # Wenn eine Datei noch gesperrt ist, ignorieren wir sie einfach
+        except Exception:
+            pass
+        # -------------------------------------------------------------
 
         path_tl = os.path.join(res_path, "template_tl.png")
         path_br = os.path.join(res_path, "template_br.png")
@@ -149,9 +160,16 @@ class Worker:
                 logging.warning("Kein Text erkannt.")
                 return
 
-            # TTS
+            # TTS GENERIERUNG
             logging.info(f"Generiere Audio...")
-            out_path = "output_speech.wav"
+            
+            # --- NEU: Dynamischer Dateiname mit Zeitstempel ---
+            # Verhindert "Permission Denied", weil wir nie eine Datei überschreiben,
+            # die gerade abgespielt wird.
+            timestamp = int(time.time())
+            out_path = f"output_speech_{timestamp}.wav"
+            # --------------------------------------------------
+            
             self.tts.tts_to_file(text=full_text, speaker_wav=ref_audio, language="de", file_path=out_path)
             
             logging.info("Audio fertig!")
