@@ -1,6 +1,7 @@
 import tkinter as tk
 import pyautogui
 import os
+import time  # WICHTIG: Für die kurze Wartezeit
 
 class DynamicSnipper(tk.Toplevel):
     def __init__(self, parent, resources_path, on_complete):
@@ -15,8 +16,9 @@ class DynamicSnipper(tk.Toplevel):
         
         # UI Setup (Vollbild, Transparent)
         self.attributes('-fullscreen', True)
-        self.attributes('-alpha', 0.3)
+        self.attributes('-alpha', 0.3) # Hier ist die Abdunkelung (30% sichtbar)
         self.configure(bg='black', cursor="cross")
+        self.attributes('-topmost', True) # Immer im Vordergrund
         
         self.canvas = tk.Canvas(self, cursor="cross", bg="black", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
@@ -41,9 +43,9 @@ class DynamicSnipper(tk.Toplevel):
 
     def update_instruction(self):
         if self.step == 1:
-            self.lbl_info.config(text="SCHRITT 1/2: Markiere die OBERE LINKE Ecke (Anker)", bg="red")
+            self.lbl_info.config(text="SCHRITT 1/2: Markiere ein eindeutiges Merkmal OBEN LINKS (z.B. Icon/Verzierung)", bg="red")
         else:
-            self.lbl_info.config(text="SCHRITT 2/2: Markiere die UNTERE RECHTE Ecke (Ende)", bg="blue")
+            self.lbl_info.config(text="SCHRITT 2/2: Markiere ein Merkmal UNTEN RECHTS (z.B. Button)", bg="blue")
 
     def on_press(self, event):
         self.start_x = event.x
@@ -63,22 +65,33 @@ class DynamicSnipper(tk.Toplevel):
 
         if w < 10 or h < 10: return
 
-        if self.step == 1:
-            # Speichere Top-Left Template
-            path = os.path.join(self.resources_path, "template_tl.png")
-            pyautogui.screenshot(region=(x1, y1, w, h)).save(path)
-            
-            # Weiter zu Schritt 2
-            self.step = 2
-            self.canvas.delete(self.rect)
-            self.update_instruction()
-            
-        elif self.step == 2:
-            # Speichere Bottom-Right Template
-            path = os.path.join(self.resources_path, "template_br.png")
-            pyautogui.screenshot(region=(x1, y1, w, h)).save(path)
-            
-            self.close(True)
+        # --- DER FIX: Overlay kurz ausblenden! ---
+        self.withdraw()             # Fenster verstecken
+        self.parent.update()        # GUI Update erzwingen
+        time.sleep(0.3)             # 300ms warten, bis das Spiel wieder hell ist
+        # ----------------------------------------
+
+        try:
+            if self.step == 1:
+                path = os.path.join(self.resources_path, "template_tl.png")
+                # Screenshot vom HELLEN Bildschirm machen
+                pyautogui.screenshot(region=(x1, y1, w, h)).save(path)
+                
+                # Overlay wieder anzeigen für Schritt 2
+                self.deiconify()
+                self.step = 2
+                self.canvas.delete(self.rect)
+                self.update_instruction()
+                
+            elif self.step == 2:
+                path = os.path.join(self.resources_path, "template_br.png")
+                # Screenshot vom HELLEN Bildschirm machen
+                pyautogui.screenshot(region=(x1, y1, w, h)).save(path)
+                
+                self.close(True)
+        except Exception as e:
+            print(f"Fehler beim Snipping: {e}")
+            self.close(False)
 
     def close(self, success=False):
         self.destroy()
