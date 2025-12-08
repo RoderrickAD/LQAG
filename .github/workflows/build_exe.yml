@@ -26,29 +26,25 @@ jobs:
         # 2. Requirements
         pip install -r requirements.txt
         
-        # 3. FIXES für die "Dependency Hell":
-        
-        # Numpy Fix (DLLs)
+        # 3. FIXES:
         pip install numpy==1.26.4 --upgrade --no-deps
-        
-        # Inflect Fix (Source Code Fehler)
         pip install inflect==5.6.0 --upgrade --no-deps
-
-        # NEU: Transformers Fix (Behebt BeamSearchScorer Fehler)
-        # Wir gehen auf 4.33.0 zurück, das läuft stabil mit XTTS v2
         pip install transformers==4.33.0 --upgrade
+        
+        # Audio Fix: Sicherstellen, dass soundfile installiert ist
+        pip install soundfile
         
         # 4. PyInstaller
         pip install pyinstaller
 
     - name: Download TTS Config to Resources
       run: |
-        python -c "import urllib.request, os; os.makedirs('resources', exist_ok=True); urllib.request.urlretrieve('https://raw.githubusercontent.com/coqui-ai/TTS/dev/TTS/.models.json', 'resources/models.json'); print('Download nach resources/models.json erfolgreich!')"
+        python -c "import urllib.request, os; os.makedirs('resources', exist_ok=True); urllib.request.urlretrieve('https://raw.githubusercontent.com/coqui-ai/TTS/dev/TTS/.models.json', 'resources/models.json'); print('Download erfolgreich!')"
 
     - name: Build EXE with PyInstaller
-      # Alles einsammeln wie gehabt
+      # WICHTIG: --collect-all "soundfile" hinzugefügt!
       run: |
-        pyinstaller --noconfirm --onedir --windowed --name "LQAG" --collect-all "TTS" --collect-all "numpy" --collect-all "trainer" --collect-all "coqpit" --collect-all "gruut" --collect-all "scipy" --collect-all "jamo" --collect-all "jieba" --add-data "src;src" src/main.py
+        pyinstaller --noconfirm --onedir --windowed --name "LQAG" --collect-all "TTS" --collect-all "numpy" --collect-all "trainer" --collect-all "coqpit" --collect-all "gruut" --collect-all "scipy" --collect-all "jamo" --collect-all "jieba" --collect-all "soundfile" --add-data "src;src" src/main.py
 
     - name: Copy Assets to Distribution Folder
       shell: cmd
