@@ -43,7 +43,6 @@ class NullWriter:
 class Worker:
     def __init__(self):
         logging.info("Initialisiere EasyOCR...")
-        # gpu=True ist wichtig für Speed
         self.reader = easyocr.Reader(['de'], gpu=torch.cuda.is_available())
         self.tts = None
         
@@ -54,7 +53,6 @@ class Worker:
             if torch.cuda.is_available():
                 device = "cuda"
                 logging.info("🚀 NVIDIA GPU gefunden! Aktiviere Turbo-Modus.")
-                # Performance Tweaks
                 torch.backends.cudnn.benchmark = True
                 torch.backends.cuda.matmul.allow_tf32 = True 
                 torch.backends.cudnn.allow_tf32 = True
@@ -77,66 +75,59 @@ class Worker:
 
                 self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2", progress_bar=False).to(device)
                 logging.info(f"✅ TTS Modell erfolgreich geladen auf: {device.upper()}")
-                
             except Exception as e:
                 logging.critical(f"❌ FEHLER beim Laden des Modells: {e}")
                 logging.debug(traceback.format_exc())
 
-    def run_process(self, resources_path, reference_audio, on_audio_ready):
-        thread = threading.Thread(target=self._process, args=(resources_path, reference_audio, on_audio_ready))
+    def run_process(self, resources_path, reference_audio, on_audio_ready, filter_pattern=None):
+        thread = threading.Thread(target=self._process, args=(resources_path, reference_audio, on_audio_ready, filter_pattern))
         thread.start()
 
-    # --- NEU: INTELLIGENTE TEXT-AUFBEREITUNG ---
-    def clean_and_optimize_text(self, raw_text):
-        # 1. ZITAT FILTER: Suche Text zwischen ' und '
-        # Wir suchen nach 'blabla', ignorieren Zeilenumbrüche zwischendrin
-        matches = re.findall(r"'([^']*)'", raw_text, re.DOTALL)
+    def clean_and_optimize_text(self, raw_text, filter_pattern):
+        # 1. BASIS REINIGUNG (Zeilenumbrüche entfernen)
+        clean_base = raw_text.replace("\n", " ") 
+        clean_base = re.sub(r'\s+', ' ', clean_base).strip()
         
-        if not matches:
-            logging.warning("Keine Quest-Zitate ('...') gefunden. Nutze Fallback (ganzer Text).")
-            # Fallback: Versuche zumindest das Gröbste zu reinigen
-            clean_text = raw_text
-        else:
-            # Wir verbinden alle gefundenen Zitat-Blöcke
-            clean_text = " ".join(matches)
-            logging.info(f"Quest-Filter aktiv: {len(matches)} Textblöcke extrahiert.")
+        filtered_text = clean_base
 
-        # 2. BASIS REINIGUNG
-        clean_text = clean_text.replace("\n", " ") # Zeilenumbrüche weg
-        clean_text = re.sub(r'\s+', ' ', clean_text).strip() # Doppelte Leerzeichen weg
+        # 2. DYNAMISCHER FILTER
+        if filter_pattern:
+            try:
+                matches = re.findall(filter_pattern, clean_base, re.DOTALL)
+                if matches:
+                    filtered_text = " ".join(matches)
+                    logging.info(f"Filter aktiv ({len(matches)} Treffer).")
+                else:
+                    # --- FALLBACK LOGIK ---
+                    logging.warning(f"Filter '{filter_pattern}' hat NICHTS gefunden!")
+                    logging.warning("-> FALLBACK: Nutze den gesamten Text, damit Audio generiert wird.")
+                    filtered_text = clean_base # Wir nehmen trotzdem alles!
+            except Exception as e:
+                logging.error(f"Regex Fehler: {e}")
+                filtered_text = clean_base
 
-        # 3. SATZ-OPTIMIERUNG (Deine 20-125 Zeichen Logik)
-        # Wir splitten erst grob nach Satzzeichen
-        raw_sentences = re.split(r'(?<=[.!?])\s+', clean_text)
-        
+        # 3. SATZ-OPTIMIERUNG (20-150 Zeichen Regel)
+        raw_sentences = re.split(r'(?<=[.!?])\s+', filtered_text)
         optimized_sentences = []
         current_chunk = ""
         
         for sent in raw_sentences:
             if not sent.strip(): continue
-            
-            # Wenn der aktuelle Block + der neue Satz noch unter 150 Zeichen ist...
             if len(current_chunk) + len(sent) < 150:
-                # ...und der aktuelle Block sehr kurz ist (< 20) ODER der neue Satz kurz ist,
-                # dann kleben wir sie zusammen.
                 if len(current_chunk) < 20 or len(current_chunk) > 0:
                     current_chunk += " " + sent
                 else:
                     current_chunk = sent
             else:
-                # Block ist voll -> Abspeichern und neuen Block beginnen
                 optimized_sentences.append(current_chunk.strip())
                 current_chunk = sent
         
-        # Den letzten Rest nicht vergessen
         if current_chunk:
             optimized_sentences.append(current_chunk.strip())
             
-        # Alles wieder zu einem perfekten String für die TTS zusammenfügen
-        final_text = " ".join(optimized_sentences)
-        return final_text
+        return " ".join(optimized_sentences)
 
-    def _process(self, res_path, ref_audio, callback):
+    def _process(self, res_path, ref_audio, callback, filter_pattern):
         logging.info("--- Starte Scan-Prozess ---")
         
         if self.tts is None:
@@ -176,9 +167,6 @@ class Worker:
             val1, loc1, w1, h1 = res_tl
             val2, loc2, w2, h2 = res_br
 
-            if val1 < 0.7 or val2 < 0.7:
-                logging.warning(f"Ecken ungenau ({val1:.2f}/{val2:.2f}).")
-
             x_start = loc1[0]
             y_start = loc1[1] + h1
             x_end = loc2[0] + w2
@@ -191,22 +179,37 @@ class Worker:
             roi = sc_raw.crop((x_start, y_start, x_end, y_end))
             roi_np = cv2.cvtColor(np.array(roi), cv2.COLOR_RGB2BGR)
             
-            # OCR
             logging.debug("Lese Text...")
             text_list = self.reader.readtext(roi_np, detail=0, paragraph=True)
             raw_full_text = " ".join(text_list)
             
-            # --- HIER PASSIERT DIE MAGIE ---
-            final_text = self.clean_and_optimize_text(raw_full_text)
-            # -------------------------------
+            # --- NEU: TEXT DEBUG DATEI SCHREIBEN ---
+            # Wir speichern, was OCR erkannt hat, damit du es prüfen kannst.
+            try:
+                with open("debug_ocr_text.txt", "w", encoding="utf-8") as f:
+                    f.write("=== RAW OCR TEXT ===\n")
+                    f.write(raw_full_text + "\n\n")
+                    f.write(f"=== FILTER EINSTELLUNG: {filter_pattern} ===\n\n")
+            except Exception as e:
+                logging.error(f"Konnte Debug-Text nicht speichern: {e}")
+            # ---------------------------------------
+
+            # Text verarbeiten (mit Fallback!)
+            final_text = self.clean_and_optimize_text(raw_full_text, filter_pattern)
             
-            logging.info(f"ERKANNT (Optimiert): '{final_text[:50]}...' ({len(final_text)} Zeichen)")
+            # Ergebnis auch in die Debug-Datei schreiben
+            try:
+                with open("debug_ocr_text.txt", "a", encoding="utf-8") as f:
+                    f.write("=== FINALER TEXT (FÜR AUDIO) ===\n")
+                    f.write(final_text)
+            except: pass
+
+            logging.info(f"ERKANNT: '{final_text[:50]}...' ({len(final_text)} Zeichen)")
 
             if not final_text.strip():
-                logging.warning("Kein Text erkannt (oder Filter hat alles entfernt).")
+                logging.warning("Kein Text erkannt (Bild leer?).")
                 return
 
-            # TTS
             logging.info(f"Generiere Audio...")
             timestamp = int(time.time())
             out_path = f"output_speech_{timestamp}.wav"
@@ -216,7 +219,8 @@ class Worker:
                 speaker_wav=ref_audio, 
                 language="de", 
                 file_path=out_path,
-                split_sentences=True # Coqui nutzt unsere optimierten Sätze
+                split_sentences=True, 
+                speed=1.1
             )
             
             logging.info("Audio fertig!")
