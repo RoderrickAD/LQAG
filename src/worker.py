@@ -84,7 +84,7 @@ class Worker:
         thread.start()
 
     def clean_and_optimize_text(self, raw_text, filter_pattern):
-        # 1. BASIS REINIGUNG (Zeilenumbrüche entfernen)
+        # 1. BASIS REINIGUNG
         clean_base = raw_text.replace("\n", " ") 
         clean_base = re.sub(r'\s+', ' ', clean_base).strip()
         
@@ -98,15 +98,14 @@ class Worker:
                     filtered_text = " ".join(matches)
                     logging.info(f"Filter aktiv ({len(matches)} Treffer).")
                 else:
-                    # --- FALLBACK LOGIK ---
                     logging.warning(f"Filter '{filter_pattern}' hat NICHTS gefunden!")
-                    logging.warning("-> FALLBACK: Nutze den gesamten Text, damit Audio generiert wird.")
-                    filtered_text = clean_base # Wir nehmen trotzdem alles!
+                    logging.warning("-> FALLBACK: Nutze den gesamten Text.")
+                    filtered_text = clean_base 
             except Exception as e:
                 logging.error(f"Regex Fehler: {e}")
                 filtered_text = clean_base
 
-        # 3. SATZ-OPTIMIERUNG (20-150 Zeichen Regel)
+        # 3. SATZ-OPTIMIERUNG
         raw_sentences = re.split(r'(?<=[.!?])\s+', filtered_text)
         optimized_sentences = []
         current_chunk = ""
@@ -147,18 +146,29 @@ class Worker:
             logging.debug("Mache Screenshot...")
             sc_raw = pyautogui.screenshot()
             sc = cv2.cvtColor(np.array(sc_raw), cv2.COLOR_RGB2BGR)
+            
+            # --- WIEDER AKTIV: DEBUG BILD SPEICHERN ---
+            cv2.imwrite("debug_1_screenshot.png", sc)
+            # ------------------------------------------
 
-            def find_template(img, templ_p):
+            def find_template(img, templ_p, name): # Name hinzugefügt für Log
                 if not os.path.exists(templ_p): return None
                 templ = cv2.imread(templ_p)
                 if templ is None: return None
                 h, w = templ.shape[:2]
                 res = cv2.matchTemplate(img, templ, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                
+                # Zeichne Rechteck in das Bild (für debug_3)
+                cv2.rectangle(img, max_loc, (max_loc[0] + w, max_loc[1] + h), (0, 0, 255), 2)
                 return max_val, max_loc, w, h
 
-            res_tl = find_template(sc, path_tl)
-            res_br = find_template(sc, path_br)
+            res_tl = find_template(sc, path_tl, "Top-Left")
+            res_br = find_template(sc, path_br, "Bottom-Right")
+
+            # --- WIEDER AKTIV: DEBUG MATCHES SPEICHERN ---
+            cv2.imwrite("debug_3_matches.png", sc)
+            # ---------------------------------------------
 
             if not res_tl or not res_br:
                 logging.warning("Templates nicht gefunden.")
@@ -179,35 +189,34 @@ class Worker:
             roi = sc_raw.crop((x_start, y_start, x_end, y_end))
             roi_np = cv2.cvtColor(np.array(roi), cv2.COLOR_RGB2BGR)
             
+            # --- WIEDER AKTIV: DEBUG ROI SPEICHERN ---
+            cv2.imwrite("debug_2_roi.png", roi_np)
+            # -----------------------------------------
+            
             logging.debug("Lese Text...")
             text_list = self.reader.readtext(roi_np, detail=0, paragraph=True)
             raw_full_text = " ".join(text_list)
             
-            # --- NEU: TEXT DEBUG DATEI SCHREIBEN ---
-            # Wir speichern, was OCR erkannt hat, damit du es prüfen kannst.
+            # Debug Text Datei schreiben
             try:
                 with open("debug_ocr_text.txt", "w", encoding="utf-8") as f:
                     f.write("=== RAW OCR TEXT ===\n")
                     f.write(raw_full_text + "\n\n")
                     f.write(f"=== FILTER EINSTELLUNG: {filter_pattern} ===\n\n")
-            except Exception as e:
-                logging.error(f"Konnte Debug-Text nicht speichern: {e}")
-            # ---------------------------------------
+            except: pass
 
-            # Text verarbeiten (mit Fallback!)
             final_text = self.clean_and_optimize_text(raw_full_text, filter_pattern)
             
-            # Ergebnis auch in die Debug-Datei schreiben
             try:
                 with open("debug_ocr_text.txt", "a", encoding="utf-8") as f:
-                    f.write("=== FINALER TEXT (FÜR AUDIO) ===\n")
+                    f.write("=== FINALER TEXT ===\n")
                     f.write(final_text)
             except: pass
 
             logging.info(f"ERKANNT: '{final_text[:50]}...' ({len(final_text)} Zeichen)")
 
             if not final_text.strip():
-                logging.warning("Kein Text erkannt (Bild leer?).")
+                logging.warning("Kein Text erkannt.")
                 return
 
             logging.info(f"Generiere Audio...")
