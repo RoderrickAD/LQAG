@@ -233,7 +233,7 @@ class LQAGApp:
             
             # Das Muster: Delimiter + (Alles außer Delimiter) + Delimiter
             # Beispiel für ':  '([^']*)'
-            regex_pattern = f"{safe_char}([^ {safe_char}]*){safe_char}"
+            regex_pattern = f"{safe_char}(.*?){safe_char}"
             
             logging.info(f"Scan ausgelöst (Filter zwischen: {delimiter})...")
         else:
