@@ -12,6 +12,7 @@ import torchaudio
 import soundfile as sf
 import time
 import glob
+import re
 
 # --- FIX 0: PYTORCH 2.6 KOMPATIBILITÄT ---
 _original_load = torch.load
@@ -42,7 +43,7 @@ class NullWriter:
 class Worker:
     def __init__(self):
         logging.info("Initialisiere EasyOCR...")
-        # gpu=True beschleunigt OCR massiv, wenn CUDA verfügbar ist
+        # gpu=True ist wichtig für Speed
         self.reader = easyocr.Reader(['de'], gpu=torch.cuda.is_available())
         self.tts = None
         
@@ -50,14 +51,11 @@ class Worker:
         if self.tts is None:
             logging.info("--- Lade TTS Modell (XTTS v2) ---")
             
-            # --- PERFORMANCE: GPU OPTIMIERUNGEN ---
             if torch.cuda.is_available():
                 device = "cuda"
                 logging.info("🚀 NVIDIA GPU gefunden! Aktiviere Turbo-Modus.")
-                
-                # Optimiert die Rechenkerne für deine spezifische Karte
+                # Performance Tweaks
                 torch.backends.cudnn.benchmark = True
-                # Erlaubt schnellere Matrix-Berechnungen (kleiner Qualitätsverlust, massiver Speedup)
                 torch.backends.cuda.matmul.allow_tf32 = True 
                 torch.backends.cudnn.allow_tf32 = True
             else:
@@ -65,7 +63,6 @@ class Worker:
                 logging.warning("⚠️ Keine GPU gefunden. Nutze CPU.")
 
             try:
-                # --- FIXES ---
                 if sys.stdout is None: sys.stdout = NullWriter()
                 if sys.stderr is None: sys.stderr = NullWriter()
 
@@ -78,7 +75,6 @@ class Worker:
                 def patched_ask_tos(self, output_path): return True 
                 ModelManager.ask_tos = patched_ask_tos
 
-                # Laden
                 self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2", progress_bar=False).to(device)
                 logging.info(f"✅ TTS Modell erfolgreich geladen auf: {device.upper()}")
                 
@@ -90,6 +86,56 @@ class Worker:
         thread = threading.Thread(target=self._process, args=(resources_path, reference_audio, on_audio_ready))
         thread.start()
 
+    # --- NEU: INTELLIGENTE TEXT-AUFBEREITUNG ---
+    def clean_and_optimize_text(self, raw_text):
+        # 1. ZITAT FILTER: Suche Text zwischen ' und '
+        # Wir suchen nach 'blabla', ignorieren Zeilenumbrüche zwischendrin
+        matches = re.findall(r"'([^']*)'", raw_text, re.DOTALL)
+        
+        if not matches:
+            logging.warning("Keine Quest-Zitate ('...') gefunden. Nutze Fallback (ganzer Text).")
+            # Fallback: Versuche zumindest das Gröbste zu reinigen
+            clean_text = raw_text
+        else:
+            # Wir verbinden alle gefundenen Zitat-Blöcke
+            clean_text = " ".join(matches)
+            logging.info(f"Quest-Filter aktiv: {len(matches)} Textblöcke extrahiert.")
+
+        # 2. BASIS REINIGUNG
+        clean_text = clean_text.replace("\n", " ") # Zeilenumbrüche weg
+        clean_text = re.sub(r'\s+', ' ', clean_text).strip() # Doppelte Leerzeichen weg
+
+        # 3. SATZ-OPTIMIERUNG (Deine 20-125 Zeichen Logik)
+        # Wir splitten erst grob nach Satzzeichen
+        raw_sentences = re.split(r'(?<=[.!?])\s+', clean_text)
+        
+        optimized_sentences = []
+        current_chunk = ""
+        
+        for sent in raw_sentences:
+            if not sent.strip(): continue
+            
+            # Wenn der aktuelle Block + der neue Satz noch unter 150 Zeichen ist...
+            if len(current_chunk) + len(sent) < 150:
+                # ...und der aktuelle Block sehr kurz ist (< 20) ODER der neue Satz kurz ist,
+                # dann kleben wir sie zusammen.
+                if len(current_chunk) < 20 or len(current_chunk) > 0:
+                    current_chunk += " " + sent
+                else:
+                    current_chunk = sent
+            else:
+                # Block ist voll -> Abspeichern und neuen Block beginnen
+                optimized_sentences.append(current_chunk.strip())
+                current_chunk = sent
+        
+        # Den letzten Rest nicht vergessen
+        if current_chunk:
+            optimized_sentences.append(current_chunk.strip())
+            
+        # Alles wieder zu einem perfekten String für die TTS zusammenfügen
+        final_text = " ".join(optimized_sentences)
+        return final_text
+
     def _process(self, res_path, ref_audio, callback):
         logging.info("--- Starte Scan-Prozess ---")
         
@@ -97,7 +143,6 @@ class Worker:
             logging.error("ABBRUCH: TTS Modell ist noch nicht geladen.")
             return
             
-        # Cleanup
         try:
             for old_file in glob.glob("output_speech_*.wav"):
                 try: os.remove(old_file)
@@ -108,13 +153,9 @@ class Worker:
         path_br = os.path.join(res_path, "template_br.png")
 
         try:
-            # --- SCREENSHOT & MATCHING ---
             logging.debug("Mache Screenshot...")
             sc_raw = pyautogui.screenshot()
             sc = cv2.cvtColor(np.array(sc_raw), cv2.COLOR_RGB2BGR)
-            # Wir speichern nicht mehr jedes Mal Bilder, das kostet Zeit.
-            # Nur bei Bedarf einkommentieren.
-            # cv2.imwrite("debug_1_screenshot.png", sc)
 
             def find_template(img, templ_p):
                 if not os.path.exists(templ_p): return None
@@ -129,15 +170,14 @@ class Worker:
             res_br = find_template(sc, path_br)
 
             if not res_tl or not res_br:
-                logging.warning("Templates nicht gefunden (F8 Setup gemacht?).")
+                logging.warning("Templates nicht gefunden.")
                 return
 
             val1, loc1, w1, h1 = res_tl
             val2, loc2, w2, h2 = res_br
 
-            # Toleranz
-            if val1 < 0.8 or val2 < 0.8:
-                logging.warning(f"Ecken unsicher ({val1:.2f} / {val2:.2f}).")
+            if val1 < 0.7 or val2 < 0.7:
+                logging.warning(f"Ecken ungenau ({val1:.2f}/{val2:.2f}).")
 
             x_start = loc1[0]
             y_start = loc1[1] + h1
@@ -151,33 +191,32 @@ class Worker:
             roi = sc_raw.crop((x_start, y_start, x_end, y_end))
             roi_np = cv2.cvtColor(np.array(roi), cv2.COLOR_RGB2BGR)
             
-            # --- OCR ---
+            # OCR
             logging.debug("Lese Text...")
             text_list = self.reader.readtext(roi_np, detail=0, paragraph=True)
-            full_text = " ".join(text_list)
+            raw_full_text = " ".join(text_list)
             
-            # Bereinigen von Newlines für flüssigeres Lesen
-            full_text = full_text.replace("\n", " ").strip()
+            # --- HIER PASSIERT DIE MAGIE ---
+            final_text = self.clean_and_optimize_text(raw_full_text)
+            # -------------------------------
             
-            logging.info(f"ERKANNT ({len(full_text)} Zeichen): '{full_text[:50]}...'")
+            logging.info(f"ERKANNT (Optimiert): '{final_text[:50]}...' ({len(final_text)} Zeichen)")
 
-            if not full_text:
-                logging.warning("Kein Text erkannt.")
+            if not final_text.strip():
+                logging.warning("Kein Text erkannt (oder Filter hat alles entfernt).")
                 return
 
-            # --- TTS GENERIERUNG ---
-            logging.info(f"Generiere Audio (High Performance)...")
+            # TTS
+            logging.info(f"Generiere Audio...")
             timestamp = int(time.time())
             out_path = f"output_speech_{timestamp}.wav"
             
-            # split_sentences=True ist WICHTIG für Speed bei langen Texten.
-            # Die KI berechnet Satz für Satz, statt alles auf einmal in den Speicher zu laden.
             self.tts.tts_to_file(
-                text=full_text, 
+                text=final_text, 
                 speaker_wav=ref_audio, 
                 language="de", 
                 file_path=out_path,
-                split_sentences=True 
+                split_sentences=True # Coqui nutzt unsere optimierten Sätze
             )
             
             logging.info("Audio fertig!")
