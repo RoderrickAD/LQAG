@@ -1,32 +1,91 @@
-import pygame
-import os
+import threading
 import logging
+import time
+import sys
+
+# Wir versuchen den Import sicher zu machen
+try:
+    import pyaudio
+    PYAUDIO_AVAILABLE = True
+except ImportError as e:
+    PYAUDIO_AVAILABLE = False
+    logging.critical(f"CRITICAL: PyAudio konnte nicht importiert werden: {e}")
+except Exception as e:
+    PYAUDIO_AVAILABLE = False
+    logging.critical(f"CRITICAL: Schwerer Fehler beim Laden von PyAudio: {e}")
 
 class AudioPlayer:
     def __init__(self):
-        pygame.mixer.init()
-        self.is_paused = False
+        self.p = None
+        self.stream = None
+        self.is_playing = False
+        self.stop_event = threading.Event()
+        self.pause_event = threading.Event()
+        self.pause_event.set()
 
-    def play(self, file_path):
-        if not os.path.exists(file_path): return
-        self.stop()
+        if not PYAUDIO_AVAILABLE:
+            logging.error("ABBRUCH: Audio-System nicht verfügbar (PyAudio fehlt).")
+            return
+
         try:
-            pygame.mixer.music.load(file_path)
-            pygame.mixer.music.play()
-            logging.info(">> Wiedergabe gestartet.")
-            self.is_paused = False
+            logging.info("Initialisiere PyAudio System...")
+            self.p = pyaudio.PyAudio()
+            
+            # Diagnose: Welche Geräte sehen wir?
+            info = self.p.get_host_api_info_by_index(0)
+            numdevices = info.get('deviceCount')
+            logging.info(f"Audio-System bereit. Gefundene Geräte: {numdevices}")
+            
         except Exception as e:
-            logging.error(f"Audio Fehler: {e}")
+            logging.critical(f"FEHLER bei PyAudio Init: {e}")
+            self.p = None
 
-    def toggle_pause(self):
-        if pygame.mixer.music.get_busy() or self.is_paused:
-            if self.is_paused:
-                pygame.mixer.music.unpause()
-                self.is_paused = False
-            else:
-                pygame.mixer.music.pause()
-                self.is_paused = True
+    def play_stream(self, audio_generator):
+        if self.p is None:
+            logging.error("Kann nicht abspielen: Audio-System ist tot.")
+            # Wir konsumieren den Generator trotzdem, damit der Worker nicht blockiert
+            for _ in audio_generator: pass 
+            return
 
-    def stop(self):
-        pygame.mixer.music.stop()
-        self.is_paused = False
+        self.stop()
+        thread = threading.Thread(target=self._stream_worker, args=(audio_generator,))
+        thread.start()
+
+    def _stream_worker(self, generator):
+        self.is_playing = True
+        self.stop_event.clear()
+        self.pause_event.set()
+        
+        try:
+            logging.info(">> Audio-Stream öffnet Kanal...")
+            
+            self.stream = self.p.open(
+                format=pyaudio.paFloat32,
+                channels=1,
+                rate=24000,
+                output=True
+            )
+            
+            logging.info(">> Stream läuft. Warte auf Daten...")
+            chunk_count = 0
+
+            for chunk in generator:
+                if self.stop_event.is_set(): break
+                self.pause_event.wait() 
+
+                if chunk is not None and len(chunk) > 0:
+                    self.stream.write(chunk.tobytes())
+                    chunk_count += 1
+            
+            logging.info(f"<< Stream beendet. {chunk_count} Chunks abgespielt.")
+
+        except Exception as e:
+            logging.error(f"Fehler im Audio-Stream: {e}")
+            logging.error("Traceback:", exc_info=True)
+        finally:
+            self.is_playing = False
+            if self.stream:
+                try:
+                    self.stream.stop_stream()
+                    self.stream.close()
+                except: pass
