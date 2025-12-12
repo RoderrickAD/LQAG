@@ -3,16 +3,16 @@ import logging
 import time
 import sys
 
-# Wir versuchen den Import sicher zu machen
 try:
     import pyaudio
+    import numpy as np
     PYAUDIO_AVAILABLE = True
 except ImportError as e:
     PYAUDIO_AVAILABLE = False
-    logging.critical(f"CRITICAL: PyAudio konnte nicht importiert werden: {e}")
+    logging.critical(f"PyAudio fehlt: {e}")
 except Exception as e:
     PYAUDIO_AVAILABLE = False
-    logging.critical(f"CRITICAL: Schwerer Fehler beim Laden von PyAudio: {e}")
+    logging.critical(f"Fehler: {e}")
 
 class AudioPlayer:
     def __init__(self):
@@ -24,27 +24,22 @@ class AudioPlayer:
         self.pause_event.set()
 
         if not PYAUDIO_AVAILABLE:
-            logging.error("ABBRUCH: Audio-System nicht verfügbar (PyAudio fehlt).")
+            logging.error("Kein Audio-System.")
             return
 
         try:
-            logging.info("Initialisiere PyAudio System...")
             self.p = pyaudio.PyAudio()
-            
-            # Diagnose: Welche Geräte sehen wir?
-            info = self.p.get_host_api_info_by_index(0)
-            numdevices = info.get('deviceCount')
-            logging.info(f"Audio-System bereit. Gefundene Geräte: {numdevices}")
-            
+            # Test Init
+            self.p.get_host_api_info_by_index(0)
+            logging.info("Audio-System bereit.")
         except Exception as e:
-            logging.critical(f"FEHLER bei PyAudio Init: {e}")
+            logging.critical(f"Audio Init Fehler: {e}")
             self.p = None
 
     def play_stream(self, audio_generator):
         if self.p is None:
-            logging.error("Kann nicht abspielen: Audio-System ist tot.")
-            # Wir konsumieren den Generator trotzdem, damit der Worker nicht blockiert
-            for _ in audio_generator: pass 
+            logging.error("Player nicht bereit.")
+            for _ in audio_generator: pass # Leeren
             return
 
         self.stop()
@@ -57,31 +52,24 @@ class AudioPlayer:
         self.pause_event.set()
         
         try:
-            logging.info(">> Audio-Stream öffnet Kanal...")
-            
+            logging.info(">> Stream Start.")
             self.stream = self.p.open(
                 format=pyaudio.paFloat32,
                 channels=1,
                 rate=24000,
                 output=True
             )
-            
-            logging.info(">> Stream läuft. Warte auf Daten...")
-            chunk_count = 0
 
             for chunk in generator:
                 if self.stop_event.is_set(): break
                 self.pause_event.wait() 
-
                 if chunk is not None and len(chunk) > 0:
                     self.stream.write(chunk.tobytes())
-                    chunk_count += 1
             
-            logging.info(f"<< Stream beendet. {chunk_count} Chunks abgespielt.")
+            logging.info("<< Stream Ende.")
 
         except Exception as e:
-            logging.error(f"Fehler im Audio-Stream: {e}")
-            logging.error("Traceback:", exc_info=True)
+            logging.error(f"Stream Fehler: {e}")
         finally:
             self.is_playing = False
             if self.stream:
@@ -89,3 +77,13 @@ class AudioPlayer:
                     self.stream.stop_stream()
                     self.stream.close()
                 except: pass
+
+    def stop(self):
+        if self.is_playing:
+            self.stop_event.set()
+
+    def toggle_pause(self):
+        if self.pause_event.is_set():
+            self.pause_event.clear()
+        else:
+            self.pause_event.set()
