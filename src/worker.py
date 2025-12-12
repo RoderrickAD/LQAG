@@ -88,33 +88,48 @@ class Worker:
 
     def clean_and_optimize_text(self, raw_text, filter_pattern):
         # 1. BASIS REINIGUNG
-        clean_base = raw_text.replace("\n", " ") 
+        # Zeilenumbrüche zu Leerzeichen
+        clean_base = raw_text.replace("\n", " ")
+        # Doppelte Leerzeichen weg
         clean_base = re.sub(r'\s+', ' ', clean_base).strip()
+        
+        # --- NEU: QUOTE NORMALISIERUNG ---
+        # OCR verwechselt oft ` ‘ ’ ´ mit '. Wir machen alles einheitlich zu '.
+        # Das hilft dem Filter, Anfang und Ende sicher zu finden.
+        clean_base = re.sub(r"[‘´`’]", "'", clean_base)
+        # ---------------------------------
         
         filtered_text = clean_base
 
         # 2. DYNAMISCHER FILTER
         if filter_pattern:
             try:
+                # Wir suchen nach Übereinstimmungen
                 matches = re.findall(filter_pattern, clean_base, re.DOTALL)
+                
                 if matches:
+                    # Wenn wir mehrere Blöcke finden (z.B. 'Text1' und 'Text2'),
+                    # kleben wir sie einfach mit einem Leerzeichen zusammen.
                     filtered_text = " ".join(matches)
-                    logging.info(f"Filter aktiv ({len(matches)} Treffer).")
+                    logging.info(f"Filter aktiv ({len(matches)} Blöcke gefunden).")
                 else:
-                    logging.warning(f"Filter '{filter_pattern}' hat NICHTS gefunden!")
-                    logging.warning("-> FALLBACK: Nutze den gesamten Text.")
+                    logging.warning(f"Filter '{filter_pattern}' hat nichts gefunden! -> FALLBACK: Nutze alles.")
                     filtered_text = clean_base 
             except Exception as e:
                 logging.error(f"Regex Fehler: {e}")
                 filtered_text = clean_base
 
-        # 3. SATZ-OPTIMIERUNG (Deine Logik: Kurze Sätze zusammenkleben)
+        # 3. SATZ-OPTIMIERUNG (Deine 20-150 Zeichen Regel)
+        # Hier splitten wir den Text wieder in sprechbare Häppchen
         raw_sentences = re.split(r'(?<=[.!?])\s+', filtered_text)
         optimized_sentences = []
         current_chunk = ""
         
         for sent in raw_sentences:
-            if not sent.strip(): continue
+            sent = sent.strip()
+            if not sent: continue
+            
+            # Klebe kurze Sätze aneinander
             if len(current_chunk) + len(sent) < 150:
                 if len(current_chunk) < 20 or len(current_chunk) > 0:
                     current_chunk += " " + sent
