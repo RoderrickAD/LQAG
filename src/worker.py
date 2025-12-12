@@ -43,7 +43,9 @@ class NullWriter:
 class Worker:
     def __init__(self):
         logging.info("Initialisiere EasyOCR...")
-        self.reader = easyocr.Reader(['de'], gpu=torch.cuda.is_available())
+        # gpu=True ist PFLICHT für Geschwindigkeit.
+        # verbose=False verhindert Spam in der Konsole.
+        self.reader = easyocr.Reader(['de'], gpu=torch.cuda.is_available(), verbose=False)
         self.tts = None
         
     def load_tts_model(self):
@@ -53,6 +55,7 @@ class Worker:
             if torch.cuda.is_available():
                 device = "cuda"
                 logging.info("🚀 NVIDIA GPU gefunden! Aktiviere Turbo-Modus.")
+                # Maximale GPU Optimierung
                 torch.backends.cudnn.benchmark = True
                 torch.backends.cuda.matmul.allow_tf32 = True 
                 torch.backends.cudnn.allow_tf32 = True
@@ -105,7 +108,7 @@ class Worker:
                 logging.error(f"Regex Fehler: {e}")
                 filtered_text = clean_base
 
-        # 3. SATZ-OPTIMIERUNG
+        # 3. SATZ-OPTIMIERUNG (Deine Logik: Kurze Sätze zusammenkleben)
         raw_sentences = re.split(r'(?<=[.!?])\s+', filtered_text)
         optimized_sentences = []
         current_chunk = ""
@@ -143,32 +146,25 @@ class Worker:
         path_br = os.path.join(res_path, "template_br.png")
 
         try:
+            # 1. SCREENSHOT
             logging.debug("Mache Screenshot...")
             sc_raw = pyautogui.screenshot()
             sc = cv2.cvtColor(np.array(sc_raw), cv2.COLOR_RGB2BGR)
-            
-            # --- WIEDER AKTIV: DEBUG BILD SPEICHERN ---
             cv2.imwrite("debug_1_screenshot.png", sc)
-            # ------------------------------------------
 
-            def find_template(img, templ_p, name): # Name hinzugefügt für Log
+            def find_template(img, templ_p):
                 if not os.path.exists(templ_p): return None
                 templ = cv2.imread(templ_p)
                 if templ is None: return None
                 h, w = templ.shape[:2]
                 res = cv2.matchTemplate(img, templ, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(res)
-                
-                # Zeichne Rechteck in das Bild (für debug_3)
                 cv2.rectangle(img, max_loc, (max_loc[0] + w, max_loc[1] + h), (0, 0, 255), 2)
                 return max_val, max_loc, w, h
 
-            res_tl = find_template(sc, path_tl, "Top-Left")
-            res_br = find_template(sc, path_br, "Bottom-Right")
-
-            # --- WIEDER AKTIV: DEBUG MATCHES SPEICHERN ---
+            res_tl = find_template(sc, path_tl)
+            res_br = find_template(sc, path_br)
             cv2.imwrite("debug_3_matches.png", sc)
-            # ---------------------------------------------
 
             if not res_tl or not res_br:
                 logging.warning("Templates nicht gefunden.")
@@ -188,16 +184,33 @@ class Worker:
 
             roi = sc_raw.crop((x_start, y_start, x_end, y_end))
             roi_np = cv2.cvtColor(np.array(roi), cv2.COLOR_RGB2BGR)
-            
-            # --- WIEDER AKTIV: DEBUG ROI SPEICHERN ---
             cv2.imwrite("debug_2_roi.png", roi_np)
-            # -----------------------------------------
             
-            logging.debug("Lese Text...")
-            text_list = self.reader.readtext(roi_np, detail=0, paragraph=True)
+            # --- PERFORMANCE BOOST: GRAYSCALE ---
+            # Wandelt Bild in Graustufen um (entfernt Farben) -> 3x weniger Daten
+            gray_roi = cv2.cvtColor(roi_np, cv2.COLOR_BGR2GRAY)
+            
+            # --- START ZEITMESSUNG ---
+            ocr_start_time = time.time()
+            logging.debug(f"Starte OCR (Grayscale, Raw-Mode)...")
+            
+            # --- OCR CONFIG ---
+            text_list = self.reader.readtext(
+                gray_roi, 
+                detail=0,           # Nur Text zurückgeben
+                paragraph=False,    # Deaktiviert: Keine Absatz-Analyse (Spart Zeit!)
+                workers=0,          # Deaktiviert: Kein Multiprocessing-Overhead (Spart Zeit!)
+                batch_size=4,       # Kleiner Batch für kleine Bilder
+                reformat=False      # Deaktiviert: Keine Bildverbesserung (Spart Zeit!)
+            )
+            
+            ocr_end_time = time.time()
+            logging.info(f"OCR-Dauer: {ocr_end_time - ocr_start_time:.2f} Sekunden.")
+            # --------------------------
+            
             raw_full_text = " ".join(text_list)
             
-            # Debug Text Datei schreiben
+            # Debug Text Datei
             try:
                 with open("debug_ocr_text.txt", "w", encoding="utf-8") as f:
                     f.write("=== RAW OCR TEXT ===\n")
