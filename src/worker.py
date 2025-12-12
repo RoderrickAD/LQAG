@@ -14,7 +14,7 @@ import time
 import glob
 import re
 
-# --- FIX 0: PYTORCH 2.6 KOMPATIBILITÄT ---
+# --- FIXES ---
 _original_load = torch.load
 def patched_torch_load(*args, **kwargs):
     if 'weights_only' not in kwargs:
@@ -22,7 +22,6 @@ def patched_torch_load(*args, **kwargs):
     return _original_load(*args, **kwargs)
 torch.load = patched_torch_load
 
-# --- FIX 3: AUDIO BACKEND ---
 def manual_audio_load(filepath, *args, **kwargs):
     data, samplerate = sf.read(filepath)
     if data.ndim == 1:
@@ -31,7 +30,7 @@ def manual_audio_load(filepath, *args, **kwargs):
     tensor = torch.from_numpy(data).float()
     return tensor, samplerate
 torchaudio.load = manual_audio_load
-# ---------------------------------------------
+# -------------
 
 from TTS.api import TTS
 from TTS.utils.manage import ModelManager 
@@ -42,32 +41,23 @@ class NullWriter:
 
 class Worker:
     def __init__(self):
+        print("DEBUG: Worker __init__ gestartet")
         logging.info("Initialisiere EasyOCR...")
         self.reader = easyocr.Reader(['de'], gpu=torch.cuda.is_available(), verbose=False)
         self.tts = None
+        print("DEBUG: Worker __init__ fertig")
         
     def load_tts_model(self):
         if self.tts is None:
-            logging.info("--- Lade TTS Modell (XTTS v2) ---")
+            logging.info("--- Lade TTS Modell ---")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
             
-            if torch.cuda.is_available():
-                device = "cuda"
-                logging.info("🚀 NVIDIA GPU gefunden! Aktiviere Turbo-Modus.")
-                torch.backends.cudnn.benchmark = True
-                torch.backends.cuda.matmul.allow_tf32 = True 
-                torch.backends.cudnn.allow_tf32 = True
-            else:
-                device = "cpu"
-                logging.warning("⚠️ Keine GPU gefunden. Nutze CPU.")
-
             try:
-                # DEBUG: Wir lassen stderr an, damit wir Fehler sehen!
+                # WICHTIG: Kein NullWriter, damit wir Fehler sehen!
                 # if sys.stdout is None: sys.stdout = NullWriter()
-                # if sys.stderr is None: sys.stderr = NullWriter()
-
+                
                 config_path = os.path.join(os.getcwd(), "resources", "models.json")
                 if os.path.exists(config_path):
-                    logging.info(f"PATCH: Nutze Config-Datei aus: {config_path}")
                     def patched_get_models_file_path(self): return config_path
                     TTS.get_models_file_path = patched_get_models_file_path
 
@@ -75,22 +65,22 @@ class Worker:
                 ModelManager.ask_tos = patched_ask_tos
 
                 self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2", progress_bar=False).to(device)
-                logging.info(f"✅ TTS Modell erfolgreich geladen auf: {device.upper()}")
+                logging.info(f"✅ TTS Modell geladen auf: {device}")
             except Exception as e:
-                logging.critical(f"❌ FEHLER beim Laden des Modells: {e}")
-                logging.debug(traceback.format_exc())
+                logging.critical(f"❌ MODEL LOAD ERROR: {e}")
+                traceback.print_exc()
 
     def run_process(self, resources_path, reference_audio, on_audio_ready, filter_pattern=None):
-        # Wir loggen HIER, ob der Aufruf überhaupt ankommt
-        logging.info(f"Worker Dispatch: Audio={reference_audio}, Filter={filter_pattern}")
+        # Diagnose-Ausgabe direkt in die Konsole
+        print(f"DEBUG: run_process aufgerufen! Pattern: {filter_pattern}")
         
-        # Thread starten
         thread = threading.Thread(target=self._process, args=(resources_path, reference_audio, on_audio_ready, filter_pattern))
         thread.start()
+        print("DEBUG: Thread gestartet.")
 
     def clean_and_optimize_text(self, raw_text, filter_pattern):
-        clean_base = raw_text.replace("\n", " ") 
-        clean_base = re.sub(r'\s+', ' ', clean_base).strip()
+        clean_base = raw_text.replace("\n", " ").strip()
+        clean_base = re.sub(r'\s+', ' ', clean_base)
         clean_base = re.sub(r"[‘´`’]", "'", clean_base)
         
         filtered_text = clean_base
@@ -100,78 +90,62 @@ class Worker:
                 matches = re.findall(filter_pattern, clean_base, re.DOTALL)
                 if matches:
                     filtered_text = " ".join(matches)
-                    logging.info(f"Filter aktiv ({len(matches)} Blöcke gefunden).")
                 else:
-                    logging.warning(f"Filter '{filter_pattern}' hat nichts gefunden! -> FALLBACK.")
+                    logging.warning("Filter leer -> Fallback.")
                     filtered_text = clean_base 
-            except Exception as e:
-                logging.error(f"Regex Fehler: {e}")
+            except:
                 filtered_text = clean_base
 
-        raw_sentences = re.split(r'(?<=[.!?])\s+', filtered_text)
-        optimized_sentences = []
-        current_chunk = ""
-        
-        for sent in raw_sentences:
-            sent = sent.strip()
-            if not sent: continue
-            if len(current_chunk) + len(sent) < 150:
-                if len(current_chunk) < 20 or len(current_chunk) > 0:
-                    current_chunk += " " + sent
-                else:
-                    current_chunk = sent
-            else:
-                optimized_sentences.append(current_chunk.strip())
-                current_chunk = sent
-        
-        if current_chunk:
-            optimized_sentences.append(current_chunk.strip())
-            
-        return " ".join(optimized_sentences)
+        return filtered_text
 
     def _process(self, res_path, ref_audio, callback, filter_pattern):
-        # SOFORT EIN TRY-CATCH UM ALLES, DAMIT WIR DEN FEHLER FANGEN
+        print("DEBUG: Bin im Thread _process angekommen!") # Lebenszeichen 1
+        
         try:
             logging.info("--- Starte Scan-Prozess ---")
             
             if self.tts is None:
-                logging.error("ABBRUCH: TTS Modell ist noch nicht geladen.")
+                logging.error("ABBRUCH: TTS Modell fehlt.")
                 return
-                
+
+            # Teste Bildaufnahme explizit
+            print("DEBUG: Prüfe Screenshot Funktion...")
             try:
-                for old_file in glob.glob("output_speech_*.wav"):
-                    try: os.remove(old_file)
-                    except: pass
-            except: pass
+                sc_raw = pyautogui.screenshot()
+                print("DEBUG: Screenshot erfolgreich!")
+                sc = cv2.cvtColor(np.array(sc_raw), cv2.COLOR_RGB2BGR)
+            except Exception as e_scr:
+                logging.critical(f"FEHLER BEI BILDAUFNAHME: {e_scr}")
+                return
 
             path_tl = os.path.join(res_path, "template_tl.png")
             path_br = os.path.join(res_path, "template_br.png")
 
-            logging.debug("Mache Screenshot...")
-            sc_raw = pyautogui.screenshot()
-            sc = cv2.cvtColor(np.array(sc_raw), cv2.COLOR_RGB2BGR)
-            cv2.imwrite("debug_1_screenshot.png", sc)
-
+            print(f"DEBUG: Suche Templates in {res_path}")
+            
+            # Helper
             def find_template(img, templ_p):
-                if not os.path.exists(templ_p): return None
+                if not os.path.exists(templ_p):
+                    print(f"DEBUG: Template fehlt: {templ_p}")
+                    return None
                 templ = cv2.imread(templ_p)
                 if templ is None: return None
                 h, w = templ.shape[:2]
                 res = cv2.matchTemplate(img, templ, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(res)
-                cv2.rectangle(img, max_loc, (max_loc[0] + w, max_loc[1] + h), (0, 0, 255), 2)
                 return max_val, max_loc, w, h
 
             res_tl = find_template(sc, path_tl)
             res_br = find_template(sc, path_br)
-            cv2.imwrite("debug_3_matches.png", sc)
 
             if not res_tl or not res_br:
-                logging.warning("Templates nicht gefunden.")
+                logging.warning("Templates nicht gefunden! (F8 neu machen)")
                 return
 
             val1, loc1, w1, h1 = res_tl
             val2, loc2, w2, h2 = res_br
+            
+            print(f"DEBUG: Matches gefunden: {val1:.2f} / {val2:.2f}")
 
             x_start = loc1[0]
             y_start = loc1[1] + h1
@@ -179,41 +153,29 @@ class Worker:
             y_end = loc2[1]
 
             if x_end <= x_start or y_end <= y_start:
-                logging.error("FEHLER: Bereich ungültig.")
+                logging.error(f"FEHLER: Ungültige Koordinaten: X:{x_start}-{x_end} Y:{y_start}-{y_end}")
                 return
 
+            print("DEBUG: Schneide Bild aus...")
             roi = sc_raw.crop((x_start, y_start, x_end, y_end))
             roi_np = cv2.cvtColor(np.array(roi), cv2.COLOR_RGB2BGR)
-            cv2.imwrite("debug_2_roi.png", roi_np)
             
-            # Grayscale OCR
+            # OCR
+            print("DEBUG: Starte OCR...")
             gray_roi = cv2.cvtColor(roi_np, cv2.COLOR_BGR2GRAY)
-            ocr_start = time.time()
-            logging.debug(f"Starte OCR...")
+            text_list = self.reader.readtext(gray_roi, detail=0, paragraph=False, workers=0, reformat=False)
             
-            text_list = self.reader.readtext(gray_roi, detail=0, paragraph=False, workers=0, batch_size=4, reformat=False)
+            raw_text = " ".join(text_list)
+            print(f"DEBUG: OCR fertig. Textlänge: {len(raw_text)}")
             
-            logging.info(f"OCR-Dauer: {time.time() - ocr_start:.2f}s")
-            
-            raw_full_text = " ".join(text_list)
-            
-            # Debug Text speichern
-            try:
-                with open("debug_ocr_text.txt", "w", encoding="utf-8") as f:
-                    f.write(f"RAW: {raw_full_text}\nFILTER: {filter_pattern}\n")
-            except: pass
-
-            final_text = self.clean_and_optimize_text(raw_full_text, filter_pattern)
-            
-            logging.info(f"ERKANNT: '{final_text[:50]}...' ({len(final_text)} Zeichen)")
+            final_text = self.clean_and_optimize_text(raw_full_text=raw_text, filter_pattern=filter_pattern)
+            logging.info(f"ERKANNT: '{final_text[:30]}...'")
 
             if not final_text.strip():
                 logging.warning("Kein Text erkannt.")
                 return
 
-            logging.info(f"Generiere Audio-Stream...")
-            
-            # --- STREAMING ---
+            print("DEBUG: Starte TTS Streaming...")
             try:
                 stream_generator = self.tts.synthesizer.tts(
                     text=final_text,
@@ -223,22 +185,13 @@ class Worker:
                     split_sentences=True,
                     speed=1.1
                 )
-                
-                # Generator übergeben
                 callback(stream_generator)
-                logging.info("Stream übergeben!")
+                print("DEBUG: Stream übergeben.")
                 
             except Exception as e:
-                logging.error(f"TTS Streaming Fehler: {e}")
-                logging.error(traceback.format_exc())
+                logging.error(f"TTS Fehler: {e}")
 
         except Exception as e:
-            # DIESER BLOCK FÄNGT JETZT ALLES AB
-            logging.critical(f"FATALER FEHLER IM WORKER THREAD: {e}")
+            print(f"CRITICAL WORKER CRASH: {e}")
+            logging.critical(f"WORKER CRASH: {e}")
             logging.critical(traceback.format_exc())
-            # Wir schreiben es auch in eine Notfall-Datei, falls Logging versagt
-            try:
-                with open("CRASH_LOG.txt", "w") as f:
-                    f.write(str(e))
-                    f.write(traceback.format_exc())
-            except: pass
