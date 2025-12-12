@@ -43,8 +43,6 @@ class NullWriter:
 class Worker:
     def __init__(self):
         logging.info("Initialisiere EasyOCR...")
-        # gpu=True ist PFLICHT für Geschwindigkeit.
-        # verbose=False verhindert Spam in der Konsole.
         self.reader = easyocr.Reader(['de'], gpu=torch.cuda.is_available(), verbose=False)
         self.tts = None
         
@@ -55,7 +53,6 @@ class Worker:
             if torch.cuda.is_available():
                 device = "cuda"
                 logging.info("🚀 NVIDIA GPU gefunden! Aktiviere Turbo-Modus.")
-                # Maximale GPU Optimierung
                 torch.backends.cudnn.benchmark = True
                 torch.backends.cuda.matmul.allow_tf32 = True 
                 torch.backends.cudnn.allow_tf32 = True
@@ -64,8 +61,9 @@ class Worker:
                 logging.warning("⚠️ Keine GPU gefunden. Nutze CPU.")
 
             try:
-                if sys.stdout is None: sys.stdout = NullWriter()
-                if sys.stderr is None: sys.stderr = NullWriter()
+                # DEBUG: Wir lassen stderr an, damit wir Fehler sehen!
+                # if sys.stdout is None: sys.stdout = NullWriter()
+                # if sys.stderr is None: sys.stderr = NullWriter()
 
                 config_path = os.path.join(os.getcwd(), "resources", "models.json")
                 if os.path.exists(config_path):
@@ -83,44 +81,33 @@ class Worker:
                 logging.debug(traceback.format_exc())
 
     def run_process(self, resources_path, reference_audio, on_audio_ready, filter_pattern=None):
+        # Wir loggen HIER, ob der Aufruf überhaupt ankommt
+        logging.info(f"Worker Dispatch: Audio={reference_audio}, Filter={filter_pattern}")
+        
+        # Thread starten
         thread = threading.Thread(target=self._process, args=(resources_path, reference_audio, on_audio_ready, filter_pattern))
         thread.start()
 
     def clean_and_optimize_text(self, raw_text, filter_pattern):
-        # 1. BASIS REINIGUNG
-        # Zeilenumbrüche zu Leerzeichen
-        clean_base = raw_text.replace("\n", " ")
-        # Doppelte Leerzeichen weg
+        clean_base = raw_text.replace("\n", " ") 
         clean_base = re.sub(r'\s+', ' ', clean_base).strip()
-        
-        # --- NEU: QUOTE NORMALISIERUNG ---
-        # OCR verwechselt oft ` ‘ ’ ´ mit '. Wir machen alles einheitlich zu '.
-        # Das hilft dem Filter, Anfang und Ende sicher zu finden.
         clean_base = re.sub(r"[‘´`’]", "'", clean_base)
-        # ---------------------------------
         
         filtered_text = clean_base
 
-        # 2. DYNAMISCHER FILTER
         if filter_pattern:
             try:
-                # Wir suchen nach Übereinstimmungen
                 matches = re.findall(filter_pattern, clean_base, re.DOTALL)
-                
                 if matches:
-                    # Wenn wir mehrere Blöcke finden (z.B. 'Text1' und 'Text2'),
-                    # kleben wir sie einfach mit einem Leerzeichen zusammen.
                     filtered_text = " ".join(matches)
                     logging.info(f"Filter aktiv ({len(matches)} Blöcke gefunden).")
                 else:
-                    logging.warning(f"Filter '{filter_pattern}' hat nichts gefunden! -> FALLBACK: Nutze alles.")
+                    logging.warning(f"Filter '{filter_pattern}' hat nichts gefunden! -> FALLBACK.")
                     filtered_text = clean_base 
             except Exception as e:
                 logging.error(f"Regex Fehler: {e}")
                 filtered_text = clean_base
 
-        # 3. SATZ-OPTIMIERUNG (Deine 20-150 Zeichen Regel)
-        # Hier splitten wir den Text wieder in sprechbare Häppchen
         raw_sentences = re.split(r'(?<=[.!?])\s+', filtered_text)
         optimized_sentences = []
         current_chunk = ""
@@ -128,8 +115,6 @@ class Worker:
         for sent in raw_sentences:
             sent = sent.strip()
             if not sent: continue
-            
-            # Klebe kurze Sätze aneinander
             if len(current_chunk) + len(sent) < 150:
                 if len(current_chunk) < 20 or len(current_chunk) > 0:
                     current_chunk += " " + sent
@@ -145,23 +130,23 @@ class Worker:
         return " ".join(optimized_sentences)
 
     def _process(self, res_path, ref_audio, callback, filter_pattern):
-        logging.info("--- Starte Scan-Prozess ---")
-        
-        if self.tts is None:
-            logging.error("ABBRUCH: TTS Modell ist noch nicht geladen.")
-            return
+        # SOFORT EIN TRY-CATCH UM ALLES, DAMIT WIR DEN FEHLER FANGEN
+        try:
+            logging.info("--- Starte Scan-Prozess ---")
             
-        try:
-            for old_file in glob.glob("output_speech_*.wav"):
-                try: os.remove(old_file)
-                except: pass
-        except Exception: pass
+            if self.tts is None:
+                logging.error("ABBRUCH: TTS Modell ist noch nicht geladen.")
+                return
+                
+            try:
+                for old_file in glob.glob("output_speech_*.wav"):
+                    try: os.remove(old_file)
+                    except: pass
+            except: pass
 
-        path_tl = os.path.join(res_path, "template_tl.png")
-        path_br = os.path.join(res_path, "template_br.png")
+            path_tl = os.path.join(res_path, "template_tl.png")
+            path_br = os.path.join(res_path, "template_br.png")
 
-        try:
-            # 1. SCREENSHOT
             logging.debug("Mache Screenshot...")
             sc_raw = pyautogui.screenshot()
             sc = cv2.cvtColor(np.array(sc_raw), cv2.COLOR_RGB2BGR)
@@ -201,68 +186,59 @@ class Worker:
             roi_np = cv2.cvtColor(np.array(roi), cv2.COLOR_RGB2BGR)
             cv2.imwrite("debug_2_roi.png", roi_np)
             
-            # --- PERFORMANCE BOOST: GRAYSCALE ---
-            # Wandelt Bild in Graustufen um (entfernt Farben) -> 3x weniger Daten
+            # Grayscale OCR
             gray_roi = cv2.cvtColor(roi_np, cv2.COLOR_BGR2GRAY)
+            ocr_start = time.time()
+            logging.debug(f"Starte OCR...")
             
-            # --- START ZEITMESSUNG ---
-            ocr_start_time = time.time()
-            logging.debug(f"Starte OCR (Grayscale, Raw-Mode)...")
+            text_list = self.reader.readtext(gray_roi, detail=0, paragraph=False, workers=0, batch_size=4, reformat=False)
             
-            # --- OCR CONFIG ---
-            text_list = self.reader.readtext(
-                gray_roi, 
-                detail=0,           # Nur Text zurückgeben
-                paragraph=False,    # Deaktiviert: Keine Absatz-Analyse (Spart Zeit!)
-                workers=0,          # Deaktiviert: Kein Multiprocessing-Overhead (Spart Zeit!)
-                batch_size=4,       # Kleiner Batch für kleine Bilder
-                reformat=False      # Deaktiviert: Keine Bildverbesserung (Spart Zeit!)
-            )
-            
-            ocr_end_time = time.time()
-            logging.info(f"OCR-Dauer: {ocr_end_time - ocr_start_time:.2f} Sekunden.")
-            # --------------------------
+            logging.info(f"OCR-Dauer: {time.time() - ocr_start:.2f}s")
             
             raw_full_text = " ".join(text_list)
             
-            # Debug Text Datei
+            # Debug Text speichern
             try:
                 with open("debug_ocr_text.txt", "w", encoding="utf-8") as f:
-                    f.write("=== RAW OCR TEXT ===\n")
-                    f.write(raw_full_text + "\n\n")
-                    f.write(f"=== FILTER EINSTELLUNG: {filter_pattern} ===\n\n")
+                    f.write(f"RAW: {raw_full_text}\nFILTER: {filter_pattern}\n")
             except: pass
 
             final_text = self.clean_and_optimize_text(raw_full_text, filter_pattern)
             
-            try:
-                with open("debug_ocr_text.txt", "a", encoding="utf-8") as f:
-                    f.write("=== FINALER TEXT ===\n")
-                    f.write(final_text)
-            except: pass
-
             logging.info(f"ERKANNT: '{final_text[:50]}...' ({len(final_text)} Zeichen)")
 
             if not final_text.strip():
                 logging.warning("Kein Text erkannt.")
                 return
 
-            logging.info(f"Generiere Audio...")
-            timestamp = int(time.time())
-            out_path = f"output_speech_{timestamp}.wav"
+            logging.info(f"Generiere Audio-Stream...")
             
-            self.tts.tts_to_file(
-                text=final_text, 
-                speaker_wav=ref_audio, 
-                language="de", 
-                file_path=out_path,
-                split_sentences=True, 
-                speed=1.1
-            )
-            
-            logging.info("Audio fertig!")
-            callback(out_path)
+            # --- STREAMING ---
+            try:
+                stream_generator = self.tts.synthesizer.tts(
+                    text=final_text,
+                    speaker_wav=ref_audio,
+                    language="de",
+                    stream=True,
+                    split_sentences=True,
+                    speed=1.1
+                )
+                
+                # Generator übergeben
+                callback(stream_generator)
+                logging.info("Stream übergeben!")
+                
+            except Exception as e:
+                logging.error(f"TTS Streaming Fehler: {e}")
+                logging.error(traceback.format_exc())
 
         except Exception as e:
-            logging.error(f"WORKER FEHLER: {e}")
-            logging.error(traceback.format_exc())
+            # DIESER BLOCK FÄNGT JETZT ALLES AB
+            logging.critical(f"FATALER FEHLER IM WORKER THREAD: {e}")
+            logging.critical(traceback.format_exc())
+            # Wir schreiben es auch in eine Notfall-Datei, falls Logging versagt
+            try:
+                with open("CRASH_LOG.txt", "w") as f:
+                    f.write(str(e))
+                    f.write(traceback.format_exc())
+            except: pass
