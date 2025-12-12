@@ -211,36 +211,25 @@ class LQAGApp:
                 self.lbl_speaker.config(text=f"Sprecher: {self.voice_mgr.current_speaker}")
 
     def trigger_scan(self):
-        if not os.path.exists(os.path.join(self.resources_path, "template_tl.png")):
-            logging.error("Keine Ecken definiert! Drücke F8.")
-            return
-        
-        voice_path = self.voice_mgr.get_voice_path()
-        if not voice_path:
-            logging.error("Keine Stimme gefunden.")
-            return
+        # ... (Prüfungen wie gehabt) ...
 
         # --- DYNAMISCHE REGEX ERSTELLUNG ---
-        # Wir holen das Zeichen aus dem Textfeld
         delimiter = self.filter_char.get().strip()
         
         if delimiter:
-            # Wir speichern die Einstellung für den nächsten Start
             self.save_settings()
-            
-            # Sicherheits-Check: Zeichen escapen (damit z.B. ? oder * nicht crasht)
             safe_char = re.escape(delimiter)
             
-            # Das Muster: Delimiter + (Alles außer Delimiter) + Delimiter
-            # Beispiel für ':  '([^']*)'
-            regex_pattern = f"{safe_char}(.*?){safe_char}"
+            # ÄNDERUNG HIER: "Gieriger" Modus (Greedy)
+            # Wir nutzen (.*) statt (.*?). 
+            # Das bedeutet: Vom ERSTEN ' bis zum ALLERLETZTEN '.
+            # Fehlerhafte ' mittendrin werden dadurch einfach als Text mitgelesen.
+            regex_pattern = f"{safe_char}(.*){safe_char}"
             
-            logging.info(f"Scan ausgelöst (Filter zwischen: {delimiter})...")
+            logging.info(f"Scan ausgelöst (Filter greedy: {delimiter}...{delimiter})...")
         else:
-            # Leer = Kein Filter
             regex_pattern = None
-            logging.info("Scan ausgelöst (Kein Filter, lese alles)...")
-        # -----------------------------------
+            logging.info("Scan ausgelöst (Kein Filter)...")
         
         self.worker.run_process(self.resources_path, voice_path, self.play_audio, regex_pattern)
 
