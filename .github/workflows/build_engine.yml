@@ -22,12 +22,39 @@ jobs:
         tar -xf python.zip -C Engine
         del python.zip
 
+    # --- NEU: TKINTER FIX START ---
+    - name: 🖼️ Tkinter Support nachinstallieren
+      shell: cmd
+      run: |
+        echo Lade Tkinter Dateien...
+        REM Wir holen die TCL/TK DLLs aus dem offiziellen Nuget Paket oder einer sauberen Quelle
+        REM Da das kompliziert ist, nutzen wir einen Trick: Wir laden das 'normale' Python zip (nicht embed)
+        REM aber nur die DLLs. Da das zu groß ist, nutzen wir hier einen direkten Download-Trick.
+        
+        REM Schritt 1: tkinter-Library files
+        curl -L -o tcltk.zip "https://github.com/dongyuwei/h_python_tkinter/archive/refs/heads/main.zip"
+        tar -xf tcltk.zip
+        
+        echo Kopiere Tkinter Dateien in die Engine...
+        REM DLLs kopieren
+        copy "h_python_tkinter-main\*.dll" "Engine\"
+        REM Lib Ordner kopieren
+        xcopy /E /I /Y "h_python_tkinter-main\tcl" "Engine\tcl"
+        xcopy /E /I /Y "h_python_tkinter-main\tkinter" "Engine\Lib\tkinter"
+        
+        REM Clean up
+        rmdir /s /q h_python_tkinter-main
+        del tcltk.zip
+    # --- NEU: TKINTER FIX ENDE ---
+
     - name: 🔧 Pip installieren
       working-directory: Engine
       shell: cmd
       run: |
         curl -L -o get-pip.py https://bootstrap.pypa.io/get-pip.py
         .\python.exe get-pip.py --no-warn-script-location
+        
+        REM Wichtig: Wir muessen den Pfad fuer Tkinter in die .pth Datei schreiben
         echo import site>> python310._pth
         del get-pip.py
 
@@ -42,29 +69,24 @@ jobs:
         .\python.exe -m pip install numpy==1.26.4
         .\python.exe -m pip install TTS easyocr pyaudio keyboard pyautogui opencv-python pillow soundfile
 
-        echo Bereinige Cache und Muell...
+        echo Bereinige Cache...
         .\python.exe -m pip cache purge
-        
-        REM Dieser Befehl verursachte den Absturz in PowerShell. In CMD funktioniert er!
         if exist "Lib\site-packages\torch\test" rmdir /s /q "Lib\site-packages\torch\test"
 
     - name: 🤐 Engine Zippen und Splitten (7-Zip)
       shell: cmd
       run: |
-        REM Wir nutzen 7z, um das Limit von 2GB zu umgehen.
         7z a -tzip -v1900m LQAG_Engine_v1.zip Engine
 
     - name: 🚀 Release erstellen und Upload
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: Engine-v1.0
-        name: "LQAG Engine Base (Split Archive)"
+        tag_name: Engine-v1.1
+        name: "LQAG Engine Base v1.1 (Mit Tkinter Fix)"
         body: |
           ### WICHTIG:
-          Die Engine ist zu groß für eine einzelne Datei.
           1. Lade **beide** Dateien herunter (`.001` und `.002`).
-          2. Du brauchst **7-Zip** (oder WinRAR), um sie zu entpacken.
-          3. Rechtsklick auf die Datei `.001` -> 7-Zip -> Hier entpacken.
+          2. Rechtsklick auf `.001` -> 7-Zip -> Hier entpacken.
         draft: false
         prerelease: false
         files: LQAG_Engine_v1.zip.*
