@@ -1,35 +1,50 @@
 import sys
 import multiprocessing
 import os
+import traceback
+
+# --- NOTFALL-PFAD-FIX (Hardcore Mode) ---
+# Wir zwingen das portable Python, in ALLE möglichen Ordner zu schauen.
+if sys.platform == "win32":
+    # 1. Wo liegt die python.exe? (Im Engine Ordner)
+    base_path = os.path.dirname(os.path.abspath(sys.executable))
+    
+    # 2. Liste aller Orte, wo Bibliotheken sein könnten
+    paths_to_check = [
+        base_path,                              # Engine/
+        os.path.join(base_path, "Lib"),         # Engine/Lib
+        os.path.join(base_path, "DLLs"),        # Engine/DLLs
+        os.path.join(base_path, "Lib", "site-packages"), # Engine/Lib/site-packages (Hier liegen keyboard, TTS etc.)
+        os.path.join(base_path, "site-packages"),        # Fallback
+        os.path.dirname(os.path.abspath(__file__))       # src/ (Wo main.py liegt)
+    ]
+    
+    # 3. Pfade hinzufügen, wenn sie existieren
+    for p in paths_to_check:
+        if os.path.exists(p) and p not in sys.path:
+            sys.path.append(p)
+
+    # 4. Tkinter Environment Variablen setzen
+    tcl_path = os.path.join(base_path, "tcl")
+    if os.path.exists(tcl_path):
+        os.environ["TCL_LIBRARY"] = os.path.join(tcl_path, "tcl8.6")
+        os.environ["TK_LIBRARY"] = os.path.join(tcl_path, "tk8.6")
+# ----------------------------------------
+
+if __name__ == "__main__":
+    multiprocessing.freeze_support()
+
+# Erst JETZT importieren wir die Bibliotheken, nachdem die Pfade stimmen
 import tkinter as tk
 from tkinter import scrolledtext, filedialog, messagebox
 import threading
 import json
 import logging
-import traceback
+import re
+import time
+import glob
 
-# --- FIX 1: PFAD ZUM EIGENEN ORDNER (SRC) HINZUFÜGEN ---
-# Das portable Python findet manchmal die Nachbar-Dateien (utils.py, worker.py) nicht.
-# Wir fügen den aktuellen Ordner ("src") hart zur Suchliste hinzu.
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.append(current_dir)
-# -------------------------------------------------------
-
-# --- FIX 2: FÜR PORTABLE TKINTER (Hatten wir schon, lassen wir drin) ---
-if sys.platform == "win32":
-    # Wir suchen den Ordner, in dem python.exe liegt (Engine)
-    # sys.executable ist z.B. .../Engine/python.exe
-    base_path = os.path.dirname(sys.executable)
-    tcl_path = os.path.join(base_path, "tcl")
-    
-    if os.path.exists(tcl_path):
-        os.environ["TCL_LIBRARY"] = os.path.join(tcl_path, "tcl8.6")
-        os.environ["TK_LIBRARY"] = os.path.join(tcl_path, "tk8.6")
-# -----------------------------------------------------------------------
-
-if __name__ == "__main__":
-    multiprocessing.freeze_support()
+# ... Ab hier kommt class LQAGApp ...
 
 class LQAGApp:
     def __init__(self, root):
