@@ -14,14 +14,14 @@ jobs:
     - name: Checkout Repo
       uses: actions/checkout@v3
 
-    # 1. Full Python als Spender laden
+    # 1. Full Python (Spender)
     - name: 🐍 Setup Full Python (Source)
       uses: actions/setup-python@v4
       with:
         python-version: '3.10.11' 
         architecture: 'x64'
 
-    # 2. Embeddable Python laden
+    # 2. Embeddable Python (Empfänger)
     - name: 🐍 Download Embeddable Python (Target)
       shell: cmd
       run: |
@@ -30,25 +30,21 @@ jobs:
         tar -xf python.zip -C Engine
         del python.zip
 
-    # 3. TRANSPLANTATION (Tkinter & DLLs)
-    - name: 🏥 Tkinter & DLLs transplantieren
+    # 3. TRANSPLANTATION (Tkinter)
+    - name: 🏥 Tkinter Transplantieren
       shell: powershell
       run: |
         $source = (python -c "import sys; print(sys.prefix)")
-        $dest = "Engine"
+        $dest = "$pwd\Engine"
         
-        # Ordner erstellen
         New-Item -ItemType Directory -Force -Path "$dest\Lib"
         New-Item -ItemType Directory -Force -Path "$dest\DLLs"
 
-        # DLLs kopieren
         copy "$source\DLLs\_tkinter.pyd" "$dest\DLLs\"
         copy "$source\DLLs\tcl86t.dll" "$dest\"
         copy "$source\DLLs\tk86t.dll" "$dest\"
         
-        # Tkinter Code
         Copy-Item -Path "$source\Lib\tkinter" -Destination "$dest\Lib\tkinter" -Recurse -Force
-        # Tcl Grafiken
         Copy-Item -Path "$source\tcl" -Destination "$dest\tcl" -Recurse -Force
 
     # 4. CONFIGURATION FIX (.pth)
@@ -63,39 +59,37 @@ jobs:
         echo Lib\site-packages>> python310._pth
         echo import site>> python310._pth
 
-    # 5. PIP VORBEREITEN
-    - name: 🔧 Pip installieren
+    # 5. PIP & INSTALLATION (ABSOLUTE PFADE!)
+    - name: 📦 Installation (PowerShell & Absolute Paths)
       working-directory: Engine
-      shell: cmd
+      shell: powershell
       run: |
-        curl -L -o get-pip.py https://bootstrap.pypa.io/get-pip.py
+        # Pip holen
+        Invoke-WebRequest -Uri https://bootstrap.pypa.io/get-pip.py -OutFile get-pip.py
         .\python.exe get-pip.py --no-warn-script-location
-        del get-pip.py
+        Remove-Item get-pip.py
 
-    # 6. INSTALLATION MIT ZWANG (--target)
-    - name: 📦 Schwere Pakete installieren (FORCE TARGET)
-      working-directory: Engine
-      shell: cmd
-      run: |
-        REM Wir zwingen pip, in unseren lokalen Ordner zu installieren!
-        set TARGET=Lib\site-packages
-        if not exist "%TARGET%" mkdir "%TARGET%"
-
-        echo Installiere PyTorch (GPU)...
-        .\python.exe -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --target "%TARGET%" --no-user
+        # Ziel-Pfad ABSOLUT definieren (Das ist der Schlüssel!)
+        # $pwd ist hier .../LQAG/Engine
+        $TargetDir = "$pwd\Lib\site-packages"
+        Write-Host "INSTALLIERE NACH: $TargetDir"
         
-        echo Installiere Requirements...
-        .\python.exe -m pip install numpy==1.26.4 --target "%TARGET%" --no-user
-        .\python.exe -m pip install TTS easyocr pyaudio keyboard pyautogui opencv-python pillow soundfile --target "%TARGET%" --no-user
+        New-Item -ItemType Directory -Force -Path $TargetDir
 
-        echo Bereinige Cache...
+        # Installation starten mit --target
+        Write-Host "--- STARTING PYTORCH ---"
+        .\python.exe -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --target "$TargetDir" --no-user --no-warn-script-location
+        
+        Write-Host "--- STARTING REQUIREMENTS ---"
+        .\python.exe -m pip install numpy==1.26.4 --target "$TargetDir" --no-user --no-warn-script-location
+        .\python.exe -m pip install TTS easyocr pyaudio keyboard pyautogui opencv-python pillow soundfile --target "$TargetDir" --no-user --no-warn-script-location
+
+        # Aufräumen
         .\python.exe -m pip cache purge
-        
-        REM Müll löschen um Platz zu sparen
-        if exist "Lib\site-packages\torch\test" rmdir /s /q "Lib\site-packages\torch\test"
-        if exist "Lib\site-packages\TTS\bin" rmdir /s /q "Lib\site-packages\TTS\bin"
+        if (Test-Path "Lib\site-packages\torch\test") { Remove-Item -Recurse -Force "Lib\site-packages\torch\test" }
+        if (Test-Path "Lib\site-packages\TTS\bin") { Remove-Item -Recurse -Force "Lib\site-packages\TTS\bin" }
 
-    - name: 🤐 Engine Zippen (Split)
+    - name: 🤐 Engine Zippen
       shell: cmd
       run: |
         7z a -tzip -v1900m LQAG_Engine_v1.zip Engine
@@ -103,8 +97,8 @@ jobs:
     - name: 🚀 Release erstellen
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: Engine-v1.4
-        name: "LQAG Engine Base v1.4 (Fixed Install)"
+        tag_name: Engine-v1.5
+        name: "LQAG Engine Base v1.5 (Absolute Power)"
         body: |
           ### WICHTIG:
           1. Lade **beide** Dateien (`.001` und `.002`).
