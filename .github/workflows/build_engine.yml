@@ -14,7 +14,15 @@ jobs:
     - name: Checkout Repo
       uses: actions/checkout@v3
 
-    - name: 🐍 Python Embeddable laden
+    # 1. Wir installieren ein VOLLSTÄNDIGES Python 3.10 als "Organspender"
+    - name: 🐍 Setup Full Python (Source)
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10.11' 
+        architecture: 'x64'
+
+    # 2. Wir laden das kleine Embeddable Python (Empfänger)
+    - name: 🐍 Download Embeddable Python (Target)
       shell: cmd
       run: |
         curl -L -o python.zip https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip
@@ -22,47 +30,49 @@ jobs:
         tar -xf python.zip -C Engine
         del python.zip
 
-    # --- NEU: TKINTER FIX START ---
-    - name: 🖼️ Tkinter Support nachinstallieren
-      shell: cmd
+    # 3. DIE TRANSPLANTATION (Tkinter Dateien kopieren)
+    - name: 🏥 Tkinter transplantieren
+      shell: powershell
       run: |
-        echo Lade Tkinter Dateien...
-        REM Wir holen die TCL/TK DLLs aus dem offiziellen Nuget Paket oder einer sauberen Quelle
-        REM Da das kompliziert ist, nutzen wir einen Trick: Wir laden das 'normale' Python zip (nicht embed)
-        REM aber nur die DLLs. Da das zu groß ist, nutzen wir hier einen direkten Download-Trick.
+        # Wir finden heraus, wo das "grosse" Python liegt
+        $source = (python -c "import sys; print(sys.prefix)")
+        $dest = "Engine"
         
-        REM Schritt 1: tkinter-Library files
-        curl -L -o tcltk.zip "https://github.com/dongyuwei/h_python_tkinter/archive/refs/heads/main.zip"
-        tar -xf tcltk.zip
-        
-        echo Kopiere Tkinter Dateien in die Engine...
-        REM DLLs kopieren
-        copy "h_python_tkinter-main\*.dll" "Engine\"
-        REM Lib Ordner kopieren
-        xcopy /E /I /Y "h_python_tkinter-main\tcl" "Engine\tcl"
-        xcopy /E /I /Y "h_python_tkinter-main\tkinter" "Engine\Lib\tkinter"
-        
-        REM Clean up
-        rmdir /s /q h_python_tkinter-main
-        del tcltk.zip
-    # --- NEU: TKINTER FIX ENDE ---
+        echo "Kopiere von: $source nach $dest"
 
-    - name: 🔧 Pip installieren
+        # A. DLLs kopieren (Die Verbindung zu Windows)
+        copy "$source\DLLs\_tkinter.pyd" "$dest\_tkinter.pyd"
+        copy "$source\DLLs\tcl86t.dll" "$dest\tcl86t.dll"
+        copy "$source\DLLs\tk86t.dll" "$dest\tk86t.dll"
+
+        # B. Die Bibliothek 'tkinter' kopieren (Der Python Code)
+        # Wir müssen erst den Lib Ordner erstellen, falls er fehlt
+        if (!(Test-Path "$dest\Lib")) { mkdir "$dest\Lib" }
+        
+        xcopy "$source\Lib\tkinter" "$dest\Lib\tkinter" /E /I /Y
+
+        # C. Den 'tcl' Ordner kopieren (Grafiken und Buttons)
+        xcopy "$source\tcl" "$dest\tcl" /E /I /Y
+
+        echo "Transplantation abgeschlossen."
+
+    # 4. Pip und Rest installieren
+    - name: 🔧 Pip und Pakete installieren
       working-directory: Engine
       shell: cmd
       run: |
         curl -L -o get-pip.py https://bootstrap.pypa.io/get-pip.py
         .\python.exe get-pip.py --no-warn-script-location
         
-        REM Wichtig: Wir muessen den Pfad fuer Tkinter in die .pth Datei schreiben
+        REM WICHTIG: Damit Python den 'Lib' Ordner findet, wo wir Tkinter hinkopiert haben!
         echo import site>> python310._pth
         del get-pip.py
 
-    - name: 📦 Schwere Bibliotheken installieren
+    - name: 📦 Schwere Pakete installieren
       working-directory: Engine
       shell: cmd
       run: |
-        echo Installiere PyTorch (GPU)...
+        echo Installiere PyTorch...
         .\python.exe -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
         
         echo Installiere Requirements...
@@ -73,19 +83,19 @@ jobs:
         .\python.exe -m pip cache purge
         if exist "Lib\site-packages\torch\test" rmdir /s /q "Lib\site-packages\torch\test"
 
-    - name: 🤐 Engine Zippen und Splitten (7-Zip)
+    - name: 🤐 Engine Zippen (Split)
       shell: cmd
       run: |
         7z a -tzip -v1900m LQAG_Engine_v1.zip Engine
 
-    - name: 🚀 Release erstellen und Upload
+    - name: 🚀 Release erstellen
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: Engine-v1.1
-        name: "LQAG Engine Base v1.1 (Mit Tkinter Fix)"
+        tag_name: Engine-v1.2
+        name: "LQAG Engine Base v1.2 (Surgical Tkinter Fix)"
         body: |
           ### WICHTIG:
-          1. Lade **beide** Dateien herunter (`.001` und `.002`).
+          1. Lade **beide** Dateien (`.001` und `.002`).
           2. Rechtsklick auf `.001` -> 7-Zip -> Hier entpacken.
         draft: false
         prerelease: false
