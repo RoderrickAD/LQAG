@@ -1,0 +1,35 @@
+name: 2. Build App Update (Auto)
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'resources/**'
+      - '*.bat'
+  workflow_dispatch:
+
+jobs:
+  package-update:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: 📂 Ordnerstruktur vorbereiten
+      run: |
+        mkdir Update
+        xcopy /E /I /Y "src" "Update\src"
+        xcopy /E /I /Y "resources" "Update\resources"
+        copy "START.bat" "Update\"
+        copy "README.md" "Update\"
+
+    - name: 🤐 Update Zippen
+      run: |
+        powershell Compress-Archive -Path "Update\*" -DestinationPath "LQAG_Update.zip"
+
+    - name: 📤 Als Artifact hochladen (Sofort verfügbar)
+      uses: actions/upload-artifact@v4
+      with:
+        name: LQAG_Latest_Update
+        path: LQAG_Update.zip
