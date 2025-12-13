@@ -14,14 +14,14 @@ jobs:
     - name: Checkout Repo
       uses: actions/checkout@v3
 
-    # 1. Wir installieren ein VOLLSTÄNDIGES Python 3.10 als "Organspender"
+    # 1. Full Python als Spender laden
     - name: 🐍 Setup Full Python (Source)
       uses: actions/setup-python@v4
       with:
         python-version: '3.10.11' 
         architecture: 'x64'
 
-    # 2. Wir laden das kleine Embeddable Python (Empfänger)
+    # 2. Embeddable Python laden
     - name: 🐍 Download Embeddable Python (Target)
       shell: cmd
       run: |
@@ -30,42 +30,63 @@ jobs:
         tar -xf python.zip -C Engine
         del python.zip
 
-    # 3. DIE TRANSPLANTATION (Tkinter Dateien kopieren)
-    - name: 🏥 Tkinter transplantieren
+    # 3. TRANSPLANTATION (Tkinter + DLLs)
+    - name: 🏥 Tkinter & DLLs transplantieren
       shell: powershell
       run: |
-        # Wir finden heraus, wo das "grosse" Python liegt
         $source = (python -c "import sys; print(sys.prefix)")
         $dest = "Engine"
+        echo "Source: $source"
         
-        echo "Kopiere von: $source nach $dest"
+        # Ordner erstellen
+        New-Item -ItemType Directory -Force -Path "$dest\Lib"
+        New-Item -ItemType Directory -Force -Path "$dest\DLLs"
 
-        # A. DLLs kopieren (Die Verbindung zu Windows)
-        copy "$source\DLLs\_tkinter.pyd" "$dest\_tkinter.pyd"
-        copy "$source\DLLs\tcl86t.dll" "$dest\tcl86t.dll"
-        copy "$source\DLLs\tk86t.dll" "$dest\tk86t.dll"
-
-        # B. Die Bibliothek 'tkinter' kopieren (Der Python Code)
-        # Wir müssen erst den Lib Ordner erstellen, falls er fehlt
-        if (!(Test-Path "$dest\Lib")) { mkdir "$dest\Lib" }
+        # A. Wichtige DLLs kopieren (in Root und DLLs zur Sicherheit)
+        copy "$source\DLLs\_tkinter.pyd" "$dest\DLLs\"
+        copy "$source\DLLs\tcl86t.dll" "$dest\"
+        copy "$source\DLLs\tk86t.dll" "$dest\"
         
-        xcopy "$source\Lib\tkinter" "$dest\Lib\tkinter" /E /I /Y
+        # B. Tkinter Python Code kopieren
+        Copy-Item -Path "$source\Lib\tkinter" -Destination "$dest\Lib\tkinter" -Recurse -Force
 
-        # C. Den 'tcl' Ordner kopieren (Grafiken und Buttons)
-        xcopy "$source\tcl" "$dest\tcl" /E /I /Y
+        # C. Tcl Grafiken kopieren
+        Copy-Item -Path "$source\tcl" -Destination "$dest\tcl" -Recurse -Force
+        
+        echo "Dateien kopiert."
 
-        echo "Transplantation abgeschlossen."
+    # 4. KONFIGURATION REPARIEREN (Das hat gefehlt!)
+    - name: 🔧 Pfade konfigurieren (.pth Datei)
+      working-directory: Engine
+      shell: cmd
+      run: |
+        REM Wir löschen die alte Datei und schreiben eine neue.
+        REM Damit sagen wir Python EXAKT, wo es suchen soll.
+        
+        echo python310.zip> python310._pth
+        echo .>> python310._pth
+        
+        REM Hier sagen wir: "Schau in den Lib Ordner!" (Da ist tkinter)
+        echo Lib>> python310._pth
+        
+        REM Hier sagen wir: "Schau in DLLs!" (Da ist _tkinter.pyd)
+        echo DLLs>> python310._pth
+        
+        REM Hier sagen wir: "Schau in site-packages!" (Da kommen pip Sachen hin)
+        echo Lib\site-packages>> python310._pth
+        
+        REM Und pip aktivieren
+        echo import site>> python310._pth
+        
+        type python310._pth
 
-    # 4. Pip und Rest installieren
+    # 5. Pip und Pakete
     - name: 🔧 Pip und Pakete installieren
       working-directory: Engine
       shell: cmd
       run: |
         curl -L -o get-pip.py https://bootstrap.pypa.io/get-pip.py
         .\python.exe get-pip.py --no-warn-script-location
-        
-        REM WICHTIG: Damit Python den 'Lib' Ordner findet, wo wir Tkinter hinkopiert haben!
-        echo import site>> python310._pth
         del get-pip.py
 
     - name: 📦 Schwere Pakete installieren
@@ -91,8 +112,8 @@ jobs:
     - name: 🚀 Release erstellen
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: Engine-v1.2
-        name: "LQAG Engine Base v1.2 (Surgical Tkinter Fix)"
+        tag_name: Engine-v1.3
+        name: "LQAG Engine Base v1.3 (Path Fix)"
         body: |
           ### WICHTIG:
           1. Lade **beide** Dateien (`.001` und `.002`).
