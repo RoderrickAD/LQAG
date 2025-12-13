@@ -1,0 +1,15 @@
+# Ignoriere die schwere Engine (wird per Skript geladen)
+Engine/
+venv/
+__pycache__/
+*.pyc
+
+# Ignoriere generierte Audio-Dateien
+output_speech_*.wav
+debug_*.png
+debug_*.txt
+CRASH_LOG.txt
+
+# Ignoriere User-Settings (jeder Freund hat eigene Tasten)
+resources/settings.json
+resources/voice_assignments.json
