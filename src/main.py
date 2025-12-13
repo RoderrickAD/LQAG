@@ -1,10 +1,22 @@
 import sys
 import multiprocessing
+import os
 
-# WICHTIG FÜR PYINSTALLER: Muss ganz am Anfang stehen!
+# --- FIX FÜR PORTABLE TKINTER ---
+if sys.platform == "win32":
+    # Wir suchen den Ordner, in dem python.exe liegt
+    base_path = os.path.dirname(sys.executable)
+    tcl_path = os.path.join(base_path, "tcl")
+    
+    if os.path.exists(tcl_path):
+        # Wir setzen die Umgebungsvariablen manuell
+        os.environ["TCL_LIBRARY"] = os.path.join(tcl_path, "tcl8.6")
+        os.environ["TK_LIBRARY"] = os.path.join(tcl_path, "tk8.6")
+# --------------------------------
+
 if __name__ == "__main__":
     multiprocessing.freeze_support()
-
+    
 import tkinter as tk
 from tkinter import scrolledtext, filedialog, messagebox
 import os
