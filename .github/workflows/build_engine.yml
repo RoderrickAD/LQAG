@@ -15,6 +15,7 @@ jobs:
       uses: actions/checkout@v3
 
     - name: 🐍 Python Embeddable laden
+      shell: cmd
       run: |
         curl -L -o python.zip https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip
         mkdir Engine
@@ -23,31 +24,34 @@ jobs:
 
     - name: 🔧 Pip installieren
       working-directory: Engine
+      shell: cmd
       run: |
         curl -L -o get-pip.py https://bootstrap.pypa.io/get-pip.py
         .\python.exe get-pip.py --no-warn-script-location
-        echo "import site">> python310._pth
+        echo import site>> python310._pth
         del get-pip.py
 
     - name: 📦 Schwere Bibliotheken installieren
       working-directory: Engine
+      shell: cmd
       run: |
-        echo "Installiere PyTorch (GPU)..."
+        echo Installiere PyTorch (GPU)...
         .\python.exe -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
         
-        echo "Installiere Requirements..."
+        echo Installiere Requirements...
         .\python.exe -m pip install numpy==1.26.4
         .\python.exe -m pip install TTS easyocr pyaudio keyboard pyautogui opencv-python pillow soundfile
 
-        echo "Bereinige Cache und Müll..."
+        echo Bereinige Cache und Muell...
         .\python.exe -m pip cache purge
-        REM Lösche unnötige Test-Dateien um Platz zu sparen
+        
+        REM Dieser Befehl verursachte den Absturz in PowerShell. In CMD funktioniert er!
         if exist "Lib\site-packages\torch\test" rmdir /s /q "Lib\site-packages\torch\test"
 
     - name: 🤐 Engine Zippen und Splitten (7-Zip)
+      shell: cmd
       run: |
         REM Wir nutzen 7z, um das Limit von 2GB zu umgehen.
-        REM -v1900m splittet die Datei alle 1.9 GB
         7z a -tzip -v1900m LQAG_Engine_v1.zip Engine
 
     - name: 🚀 Release erstellen und Upload
@@ -63,7 +67,6 @@ jobs:
           3. Rechtsklick auf die Datei `.001` -> 7-Zip -> Hier entpacken.
         draft: false
         prerelease: false
-        # Der Stern * lädt alle Teile hoch (.001, .002 usw.)
         files: LQAG_Engine_v1.zip.*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
