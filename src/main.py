@@ -1,33 +1,35 @@
 import sys
 import multiprocessing
 import os
-
-# --- FIX FÜR PORTABLE TKINTER ---
-if sys.platform == "win32":
-    # Wir suchen den Ordner, in dem python.exe liegt
-    base_path = os.path.dirname(sys.executable)
-    tcl_path = os.path.join(base_path, "tcl")
-    
-    if os.path.exists(tcl_path):
-        # Wir setzen die Umgebungsvariablen manuell
-        os.environ["TCL_LIBRARY"] = os.path.join(tcl_path, "tcl8.6")
-        os.environ["TK_LIBRARY"] = os.path.join(tcl_path, "tk8.6")
-# --------------------------------
-
-if __name__ == "__main__":
-    multiprocessing.freeze_support()
-    
 import tkinter as tk
 from tkinter import scrolledtext, filedialog, messagebox
-import os
 import threading
 import json
 import logging
 import traceback
 
-# Wir importieren hier erst mal NUR Sachen, die sicher da sind.
-# Die "gefährlichen" Imports (Worker, AudioPlayer) machen wir später im Code,
-# damit wir Fehler abfangen können.
+# --- FIX 1: PFAD ZUM EIGENEN ORDNER (SRC) HINZUFÜGEN ---
+# Das portable Python findet manchmal die Nachbar-Dateien (utils.py, worker.py) nicht.
+# Wir fügen den aktuellen Ordner ("src") hart zur Suchliste hinzu.
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+# -------------------------------------------------------
+
+# --- FIX 2: FÜR PORTABLE TKINTER (Hatten wir schon, lassen wir drin) ---
+if sys.platform == "win32":
+    # Wir suchen den Ordner, in dem python.exe liegt (Engine)
+    # sys.executable ist z.B. .../Engine/python.exe
+    base_path = os.path.dirname(sys.executable)
+    tcl_path = os.path.join(base_path, "tcl")
+    
+    if os.path.exists(tcl_path):
+        os.environ["TCL_LIBRARY"] = os.path.join(tcl_path, "tcl8.6")
+        os.environ["TK_LIBRARY"] = os.path.join(tcl_path, "tk8.6")
+# -----------------------------------------------------------------------
+
+if __name__ == "__main__":
+    multiprocessing.freeze_support()
 
 class LQAGApp:
     def __init__(self, root):
