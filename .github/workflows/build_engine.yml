@@ -1,7 +1,7 @@
 name: 1. Build Engine (Manual)
 
 on:
-  workflow_dispatch: # Nur manuell startbar!
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,7 +11,7 @@ jobs:
     runs-on: windows-latest
     
     steps:
-    - name: Checkout Repo (für Dateistruktur)
+    - name: Checkout Repo
       uses: actions/checkout@v3
 
     - name: 🐍 Python Embeddable laden
@@ -29,7 +29,7 @@ jobs:
         echo "import site">> python310._pth
         del get-pip.py
 
-    - name: 📦 Schwere Bibliotheken installieren (PyTorch & Co)
+    - name: 📦 Schwere Bibliotheken installieren
       working-directory: Engine
       run: |
         echo "Installiere PyTorch (GPU)..."
@@ -39,20 +39,31 @@ jobs:
         .\python.exe -m pip install numpy==1.26.4
         .\python.exe -m pip install TTS easyocr pyaudio keyboard pyautogui opencv-python pillow soundfile
 
-        echo "Bereinige Cache..."
+        echo "Bereinige Cache und Müll..."
         .\python.exe -m pip cache purge
+        REM Lösche unnötige Test-Dateien um Platz zu sparen
+        if exist "Lib\site-packages\torch\test" rmdir /s /q "Lib\site-packages\torch\test"
 
-    - name: 🤐 Engine Zippen
+    - name: 🤐 Engine Zippen und Splitten (7-Zip)
       run: |
-        powershell Compress-Archive -Path "Engine" -DestinationPath "LQAG_Engine_v1.zip"
+        REM Wir nutzen 7z, um das Limit von 2GB zu umgehen.
+        REM -v1900m splittet die Datei alle 1.9 GB
+        7z a -tzip -v1900m LQAG_Engine_v1.zip Engine
 
     - name: 🚀 Release erstellen und Upload
       uses: softprops/action-gh-release@v1
       with:
         tag_name: Engine-v1.0
-        name: "LQAG Engine Base (Nur einmal laden!)"
+        name: "LQAG Engine Base (Split Archive)"
+        body: |
+          ### WICHTIG:
+          Die Engine ist zu groß für eine einzelne Datei.
+          1. Lade **beide** Dateien herunter (`.001` und `.002`).
+          2. Du brauchst **7-Zip** (oder WinRAR), um sie zu entpacken.
+          3. Rechtsklick auf die Datei `.001` -> 7-Zip -> Hier entpacken.
         draft: false
         prerelease: false
-        files: LQAG_Engine_v1.zip
+        # Der Stern * lädt alle Teile hoch (.001, .002 usw.)
+        files: LQAG_Engine_v1.zip.*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
