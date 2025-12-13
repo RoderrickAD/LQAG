@@ -1,52 +1,32 @@
-LQAG - Lokaler Quest Audio Generator
-Version 1.3
-----------------------------
+# LQAG - Universal TTS Tool
 
-Vielen Dank, dass du LQAG nutzt!
+## 📦 Installation (Einmalig)
 
-WAS IST LQAG?
-LQAG steht für "Lokaler Quest Audio Generator".
-Es ist ein KI-gestütztes Tool, das Texte vom Bildschirm erkennt und mit hochwertigen Stimmen vorliest.
-Aktueller Status: Diese Version ist speziell für "The Lord of the Rings Online" (LOTRO) konfiguriert und optimiert. Unterstützung für weitere Spiele ist für die Zukunft geplant.
+Da die Engine sehr groß ist (High-Quality AI), ist sie in **zwei Teile** gesplittet.
 
---- INSTALLATION (LOTRO MODUL) ---
+1.  Lade und installiere **[7-Zip](https://www.7-zip.org/)** (kostenlos), falls du es nicht hast.
+2.  Gehe rechts auf **"Releases"** und lade **beide** Dateien der `Engine-v1.0` herunter:
+    * `LQAG_Engine_v1.zip.001`
+    * `LQAG_Engine_v1.zip.002`
+3.  Rechtsklick auf die Datei **`.001`** -> **7-Zip** -> **"Hier entpacken"**.
+    *(Er setzt die Teile automatisch zusammen und erstellt einen Ordner `Engine`)*.
 
-SCHRITT A: Das Plugin installieren
-Damit LQAG weiß, wer gerade spricht, benötigt es eine kleine Brücke zum Spiel.
-1. Öffne den Ordner "LQAG_Plugin" aus diesem Zip-Paket.
-2. Kopiere den darin enthaltenen Ordner "LQAG" (nicht die Datei, den ganzen Ordner!) nach:
-   Dokumente\The Lord of the Rings Online\Plugins\
-   (Falls der Ordner "Plugins" nicht existiert, erstelle ihn einfach).
+## 🔄 Updates (Regelmäßig)
 
-SCHRITT B: Das Tool starten
-1. Starte die Datei "LQAG.exe".
-2. Es kann beim ersten Start kurz dauern (ca. 10-20 Sekunden), bis das KI-Modell im Hintergrund geladen ist.
+1.  Gehe auf die Startseite (Code) oder "Actions" -> neuster Run.
+2.  Lade unten bei **Artifacts** das `LQAG_Latest_Update` herunter.
+3.  Entpacke den Inhalt (Ordner `src`, `resources`, `START.bat`) **direkt neben** den `Engine`-Ordner.
+    *(Dateien überschreiben lassen!)*
 
---- EINRICHTUNG IM SPIEL ---
+## 🚀 Starten
 
-1. Starte LOTRO und logge dich ein.
-2. Tippe in den Chat: /plugins load LQAG
-   (Es sollte eine grüne Meldung erscheinen: "Reporter geladen").
-3. Klicke einen NPC an (z.B. Gandalf), damit das Plugin Daten schreibt.
-4. Gehe zurück zum LQAG-Tool (Windows).
-5. Klicke auf "Datei wählen..." und navigiere zu:
-   Dokumente\The Lord of the Rings Online\PluginData\<DEIN_ACCOUNT>\AllServers\LQAG_Data.plugindata
-   
-   HINWEIS: Diese Datei wird vom Spiel erst erstellt, nachdem du das Plugin geladen und den ersten NPC angeklickt hast!
+Doppelklick auf **`START.bat`**.
 
---- BENUTZUNG ---
+---
 
-1. Öffne ein Quest-Fenster im Spiel.
-2. Drücke F9 (Standard-Hotkey).
-3. Das Tool liest den Text vor.
-4. Mit dem Pause-Knopf im Tool kannst du die Sprachausgabe anhalten wie bei einem Video.
+## 🎮 Steuerung
 
---- EIGENE STIMMEN HINZUFÜGEN ---
-
-Das System ordnet Stimmen automatisch zu. Du kannst den Ordner "resources/voices" bearbeiten:
-
-- "specific": Hier kommen Stimmen rein, die exakt so heißen wie der NPC (z.B. 'Gandalf.wav').
-- "generic_male": Wirf hier verschiedene Männerstimmen rein. LQAG wählt zufällig eine aus, wenn kein spezieller NPC erkannt wird.
-- "generic_female": Das Gleiche für Frauenstimmen.
-
-Viel Spaß beim Spielen!
+* **F8**: Setup (Ecken definieren - oben links Icon, unten rechts Button)
+* **F9**: Text scannen und vorlesen
+* **F10**: Pause / Weiter
+* **F11**: Stop
