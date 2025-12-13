@@ -8,7 +8,8 @@ if not exist "Engine\python.exe" (
     echo [FEHLER] Der Ordner 'Engine' wurde nicht gefunden!
     echo.
     echo Bitte stelle sicher, dass du:
-    echo 1. Die 'LQAG_Engine_v1.zip' (Engine Base) heruntergeladen und entpackt hast.
+    REM WICHTIG: Hier keine runden Klammern benutzen, das verwirrt Batch!
+    echo 1. Die 'LQAG_Engine_v1.zip' [Engine Base] heruntergeladen und entpackt hast.
     echo 2. Dass der Ordner 'Engine' direkt neben dieser 'START.bat' liegt.
     echo.
     pause
