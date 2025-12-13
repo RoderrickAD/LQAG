@@ -30,58 +30,41 @@ jobs:
         tar -xf python.zip -C Engine
         del python.zip
 
-    # 3. TRANSPLANTATION (Tkinter + DLLs)
+    # 3. TRANSPLANTATION (Tkinter & DLLs)
     - name: 🏥 Tkinter & DLLs transplantieren
       shell: powershell
       run: |
         $source = (python -c "import sys; print(sys.prefix)")
         $dest = "Engine"
-        echo "Source: $source"
         
         # Ordner erstellen
         New-Item -ItemType Directory -Force -Path "$dest\Lib"
         New-Item -ItemType Directory -Force -Path "$dest\DLLs"
 
-        # A. Wichtige DLLs kopieren (in Root und DLLs zur Sicherheit)
+        # DLLs kopieren
         copy "$source\DLLs\_tkinter.pyd" "$dest\DLLs\"
         copy "$source\DLLs\tcl86t.dll" "$dest\"
         copy "$source\DLLs\tk86t.dll" "$dest\"
         
-        # B. Tkinter Python Code kopieren
+        # Tkinter Code
         Copy-Item -Path "$source\Lib\tkinter" -Destination "$dest\Lib\tkinter" -Recurse -Force
-
-        # C. Tcl Grafiken kopieren
+        # Tcl Grafiken
         Copy-Item -Path "$source\tcl" -Destination "$dest\tcl" -Recurse -Force
-        
-        echo "Dateien kopiert."
 
-    # 4. KONFIGURATION REPARIEREN (Das hat gefehlt!)
+    # 4. CONFIGURATION FIX (.pth)
     - name: 🔧 Pfade konfigurieren (.pth Datei)
       working-directory: Engine
       shell: cmd
       run: |
-        REM Wir löschen die alte Datei und schreiben eine neue.
-        REM Damit sagen wir Python EXAKT, wo es suchen soll.
-        
         echo python310.zip> python310._pth
         echo .>> python310._pth
-        
-        REM Hier sagen wir: "Schau in den Lib Ordner!" (Da ist tkinter)
         echo Lib>> python310._pth
-        
-        REM Hier sagen wir: "Schau in DLLs!" (Da ist _tkinter.pyd)
         echo DLLs>> python310._pth
-        
-        REM Hier sagen wir: "Schau in site-packages!" (Da kommen pip Sachen hin)
         echo Lib\site-packages>> python310._pth
-        
-        REM Und pip aktivieren
         echo import site>> python310._pth
-        
-        type python310._pth
 
-    # 5. Pip und Pakete
-    - name: 🔧 Pip und Pakete installieren
+    # 5. PIP VORBEREITEN
+    - name: 🔧 Pip installieren
       working-directory: Engine
       shell: cmd
       run: |
@@ -89,20 +72,28 @@ jobs:
         .\python.exe get-pip.py --no-warn-script-location
         del get-pip.py
 
-    - name: 📦 Schwere Pakete installieren
+    # 6. INSTALLATION MIT ZWANG (--target)
+    - name: 📦 Schwere Pakete installieren (FORCE TARGET)
       working-directory: Engine
       shell: cmd
       run: |
-        echo Installiere PyTorch...
-        .\python.exe -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+        REM Wir zwingen pip, in unseren lokalen Ordner zu installieren!
+        set TARGET=Lib\site-packages
+        if not exist "%TARGET%" mkdir "%TARGET%"
+
+        echo Installiere PyTorch (GPU)...
+        .\python.exe -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --target "%TARGET%" --no-user
         
         echo Installiere Requirements...
-        .\python.exe -m pip install numpy==1.26.4
-        .\python.exe -m pip install TTS easyocr pyaudio keyboard pyautogui opencv-python pillow soundfile
+        .\python.exe -m pip install numpy==1.26.4 --target "%TARGET%" --no-user
+        .\python.exe -m pip install TTS easyocr pyaudio keyboard pyautogui opencv-python pillow soundfile --target "%TARGET%" --no-user
 
         echo Bereinige Cache...
         .\python.exe -m pip cache purge
+        
+        REM Müll löschen um Platz zu sparen
         if exist "Lib\site-packages\torch\test" rmdir /s /q "Lib\site-packages\torch\test"
+        if exist "Lib\site-packages\TTS\bin" rmdir /s /q "Lib\site-packages\TTS\bin"
 
     - name: 🤐 Engine Zippen (Split)
       shell: cmd
@@ -112,8 +103,8 @@ jobs:
     - name: 🚀 Release erstellen
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: Engine-v1.3
-        name: "LQAG Engine Base v1.3 (Path Fix)"
+        tag_name: Engine-v1.4
+        name: "LQAG Engine Base v1.4 (Fixed Install)"
         body: |
           ### WICHTIG:
           1. Lade **beide** Dateien (`.001` und `.002`).
