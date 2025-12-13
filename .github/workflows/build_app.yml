@@ -6,6 +6,7 @@ on:
       - 'src/**'
       - 'resources/**'
       - '*.bat'
+      - 'README.md'
   workflow_dispatch:
 
 jobs:
@@ -17,19 +18,21 @@ jobs:
       uses: actions/checkout@v3
 
     - name: 📂 Ordnerstruktur vorbereiten
+      shell: cmd
       run: |
         mkdir Update
         xcopy /E /I /Y "src" "Update\src"
         xcopy /E /I /Y "resources" "Update\resources"
-        copy "START.bat" "Update\"
-        copy "README.md" "Update\"
+        
+        REM Dateien sicher kopieren
+        if exist "START.bat" copy "START.bat" "Update\"
+        if exist "README.md" copy "README.md" "Update\"
 
-    - name: 🤐 Update Zippen
-      run: |
-        powershell Compress-Archive -Path "Update\*" -DestinationPath "LQAG_Update.zip"
+    # HIER HABEN WIR DEN ZIP-SCHRITT ENTFERNT!
+    # Wir laden direkt den Ordner hoch.
 
-    - name: 📤 Als Artifact hochladen (Sofort verfügbar)
+    - name: 📤 Als Artifact hochladen
       uses: actions/upload-artifact@v4
       with:
         name: LQAG_Latest_Update
-        path: LQAG_Update.zip
+        path: Update/
