@@ -1,27 +1,26 @@
 @echo off
-title LQAG v2.1 Launcher
+title LQAG Launcher
 cls
 
-REM Prüfen ob die Engine da ist
+REM Pruefung: Ist der Engine-Ordner da?
 if not exist "Engine\python.exe" (
     color 0C
-    echo [FEHLER] Engine Ordner nicht gefunden!
+    echo [FEHLER] Der Ordner 'Engine' wurde nicht gefunden!
     echo.
-    echo Bitte lade erst die 'LQAG_Engine_v1.zip' von den Releases herunter
-    echo und entpacke den Ordner 'Engine' direkt hierhin.
+    echo Bitte stelle sicher, dass du:
+    echo 1. Die 'LQAG_Engine_v1.zip' (Engine Base) heruntergeladen und entpackt hast.
+    echo 2. Dass der Ordner 'Engine' direkt neben dieser 'START.bat' liegt.
     echo.
     pause
     exit
 )
 
 echo Starte LQAG...
-echo.
-
-REM Start mit dem Python aus dem Engine-Ordner
+REM Wir nutzen das Python aus dem Engine-Ordner
 ".\Engine\python.exe" ".\src\main.py"
 
 if %errorlevel% neq 0 (
     echo.
-    echo [CRASH] Programm abgestuerzt. Siehe oben.
+    echo [CRASH] Das Programm wurde unerwartet beendet.
     pause
 )
