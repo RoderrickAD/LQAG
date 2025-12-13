@@ -2,39 +2,47 @@ import sys
 import multiprocessing
 import os
 import traceback
+import site # Wichtig für addsitedir
 
-# --- NOTFALL-PFAD-FIX (Hardcore Mode) ---
-# Wir zwingen das portable Python, in ALLE möglichen Ordner zu schauen.
-if sys.platform == "win32":
-    # 1. Wo liegt die python.exe? (Im Engine Ordner)
-    base_path = os.path.dirname(os.path.abspath(sys.executable))
-    
-    # 2. Liste aller Orte, wo Bibliotheken sein könnten
-    paths_to_check = [
-        base_path,                              # Engine/
-        os.path.join(base_path, "Lib"),         # Engine/Lib
-        os.path.join(base_path, "DLLs"),        # Engine/DLLs
-        os.path.join(base_path, "Lib", "site-packages"), # Engine/Lib/site-packages (Hier liegen keyboard, TTS etc.)
-        os.path.join(base_path, "site-packages"),        # Fallback
-        os.path.dirname(os.path.abspath(__file__))       # src/ (Wo main.py liegt)
-    ]
-    
-    # 3. Pfade hinzufügen, wenn sie existieren
-    for p in paths_to_check:
-        if os.path.exists(p) and p not in sys.path:
-            sys.path.append(p)
+# --- FIX: ABSOLUTE RELATIVE PFADE ---
+# Wir verlassen uns nicht mehr darauf, wo python.exe liegt.
+# Wir gehen vom Ort dieser Datei (main.py) aus.
 
-    # 4. Tkinter Environment Variablen setzen
-    tcl_path = os.path.join(base_path, "tcl")
-    if os.path.exists(tcl_path):
-        os.environ["TCL_LIBRARY"] = os.path.join(tcl_path, "tcl8.6")
-        os.environ["TK_LIBRARY"] = os.path.join(tcl_path, "tk8.6")
+# 1. Wo bin ich? (z.B. .../LQAG/src)
+current_src_dir = os.path.dirname(os.path.abspath(__file__))
+
+# 2. Wo ist das Hauptverzeichnis? (Eins hoch -> .../LQAG)
+project_root = os.path.dirname(current_src_dir)
+
+# 3. Wo MÜSSEN die Bibliotheken liegen? (.../LQAG/Engine/Lib/site-packages)
+libs_dir = os.path.join(project_root, "Engine", "Lib", "site-packages")
+dlls_dir = os.path.join(project_root, "Engine", "DLLs")
+tcl_dir = os.path.join(project_root, "Engine", "tcl")
+
+# 4. Pfade hart hinzufügen
+sys.path.append(current_src_dir) # Damit utils gefunden wird
+
+if os.path.exists(libs_dir):
+    sys.path.append(libs_dir)
+    # WICHTIG: addsitedir sorgt dafür, dass auch .pth Dateien in site-packages geladen werden
+    site.addsitedir(libs_dir) 
+else:
+    # Fallback, falls wir lokal testen und nicht im Portable Mode sind
+    pass
+
+if os.path.exists(dlls_dir):
+    sys.path.append(dlls_dir)
+
+# 5. Tkinter Environment Variablen (Pflicht für Portable)
+if os.path.exists(tcl_dir):
+    os.environ["TCL_LIBRARY"] = os.path.join(tcl_dir, "tcl8.6")
+    os.environ["TK_LIBRARY"] = os.path.join(tcl_dir, "tk8.6")
 # ----------------------------------------
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
 
-# Erst JETZT importieren wir die Bibliotheken, nachdem die Pfade stimmen
+# Jetzt Importe starten
 import tkinter as tk
 from tkinter import scrolledtext, filedialog, messagebox
 import threading
@@ -43,8 +51,6 @@ import logging
 import re
 import time
 import glob
-
-# ... Ab hier kommt class LQAGApp ...
 
 class LQAGApp:
     def __init__(self, root):
