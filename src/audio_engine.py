@@ -12,7 +12,6 @@ class AudioEngine:
         print(f"🔈 Lade Sprach-KI auf {self.device}...")
         
         # Wir laden das Standard-Modell (XTTS v2 ist das beste)
-        # Beim ersten Mal lädt er hier ca. 2GB runter!
         self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
         print("✅ Sprach-KI bereit!")
 
@@ -30,8 +29,6 @@ class AudioEngine:
             output_file = "output.wav"
             
             # Hier geschieht die Magie: Text zu Audio
-            # speaker="Ana Florence" ist eine gute englische Standardstimme, 
-            # XTTS kann aber auch Deutsch sehr gut damit.
             self.tts.tts_to_file(text=text, speaker="Ana Florence", language="de", file_path=output_file)
             
             # Abspielen
