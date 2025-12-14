@@ -1,0 +1,18 @@
+# Die Engine (zu groß für GitHub)
+Engine/
+LQAG_Engine_*.zip
+
+# Temporäre Dateien von Python
+__pycache__/
+*.pyc
+
+# Ausgabedateien (vom Sprechen)
+output.wav
+*.wav
+
+# Systemdateien
+.DS_Store
+Thumbs.db
+
+# VS Code Settings (falls du das nutzt)
+.vscode/
