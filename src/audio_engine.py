@@ -121,6 +121,7 @@ class AudioEngine:
                 for chunk in chunks:
                     if self.stop_signal: return
                     
+                    # Sicherheits-Checks
                     if not chunk or not chunk.strip(): continue
                     if not speaker_wav or not os.path.exists(speaker_wav):
                         self.log_to_file(f"Voice file missing: {speaker_wav}")
