@@ -33,8 +33,9 @@ jobs:
         Remove-Item -Recurse -Force TempPython
         
         Write-Host "Engine Basis steht. Prüfe Tkinter..."
-        if (Test-Path "Engine\Lib\tkinter") { Write-Host "✔ Tkinter gefunden!" -ForegroundColor Green }
-        else { Write-Host "❌ Tkinter fehlt!" -ForegroundColor Red; exit 1 }
+        # HIER WAR DER FEHLER - JETZT OHNE EMOJIS:
+        if (Test-Path "Engine\Lib\tkinter") { Write-Host "[OK] Tkinter gefunden!" -ForegroundColor Green }
+        else { Write-Host "[FEHLER] Tkinter fehlt!" -ForegroundColor Red; exit 1 }
 
     # 2. Pip installieren
     - name: 🔧 Pip installieren
@@ -70,8 +71,8 @@ jobs:
 
         echo --- BEREINIGEN ---
         .\python.exe -m pip cache purge
-        rmdir /s /q "Lib\site-packages\torch\test"
-        rmdir /s /q "Lib\site-packages\TTS\bin"
+        if exist "Lib\site-packages\torch\test" rmdir /s /q "Lib\site-packages\torch\test"
+        if exist "Lib\site-packages\TTS\bin" rmdir /s /q "Lib\site-packages\TTS\bin"
 
     # 5. Zippen und Uploaden
     - name: 🤐 Engine Zippen
