@@ -1,4 +1,4 @@
-name: Build Engine (V7 - Manual Architecture)
+name: Build Engine (V8 - Git Master)
 
 on:
   workflow_dispatch:
@@ -14,18 +14,18 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v3
 
-    # 1. Compiler (Immer noch wichtig für Cython Teile)
-    - name: 🛠️ Setup MSVC Compiler
+    # 1. WICHTIG: MSVC Compiler (für C++ Teile)
+    - name: 🛠️ Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
 
-    # 2. System Python
+    # 2. System Python (Spender)
     - name: 🐍 Setup System Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10.11' 
         architecture: 'x64'
 
-    # 3. Portable Python laden
+    # 3. Portable Python laden (Empfänger)
     - name: 🐍 Download Portable Python
       shell: cmd
       run: |
@@ -34,7 +34,7 @@ jobs:
         tar -xf python.zip -C Engine
         del python.zip
 
-    # 4. Transplantation
+    # 4. Transplantation (Tkinter)
     - name: 🏥 Tkinter Transplantieren
       shell: powershell
       run: |
@@ -63,8 +63,8 @@ jobs:
         echo Lib\site-packages>> python310._pth
         echo import site>> python310._pth
 
-    # 6. Pip & Setup
-    - name: 🔧 Pip & Setup
+    # 6. Pip Setup
+    - name: 🔧 Pip Setup
       working-directory: Engine
       shell: cmd
       run: |
@@ -73,73 +73,51 @@ jobs:
         del get-pip.py
         .\python.exe -m pip install --upgrade pip setuptools wheel
 
-    # ---------------------------------------------------------
-    # AB HIER WIRD ES CHIRURGISCH PRÄZISE
-    # ---------------------------------------------------------
-
-    # 7. Das Fundament (Numpy 1.22.4 ist PFLICHT für TTS)
-    - name: 🧱 Fundament (Numpy & Cython)
+    # 7. MANUELLE ABHÄNGIGKEITEN (Das Sicherheitsnetz)
+    - name: 🧱 Fundament bauen
       working-directory: Engine
       shell: cmd
       run: |
-        echo Installiere Basis...
-        .\python.exe -m pip install numpy==1.22.4 cython
-
-    # 8. PyTorch (Groß, aber harmlos)
-    - name: 🔥 PyTorch
-      working-directory: Engine
-      shell: cmd
-      run: |
+        echo Installiere kritische Pakete vorab...
+        .\python.exe -m pip install "numpy<1.24" cython
+        .\python.exe -m pip install scipy pandas librosa matplotlib pysbd tqdm
+        .\python.exe -m pip install coqpit trainer
+        
         echo Installiere PyTorch...
         .\python.exe -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --no-warn-script-location
 
-    # 9. Tools (OpenCV ALT - damit es nicht meckert)
-    - name: 📦 Tools (Safe Version)
+    # 8. TTS INSTALLATION (Vom Master Branch!)
+    # Wir nehmen die Version direkt von GitHub, die ist oft stabiler als PyPI
+    - name: 🗣️ TTS (Git Version)
       working-directory: Engine
       shell: cmd
       run: |
-        echo Installiere OpenCV 4.8 (Kompatibel mit altem Numpy)...
-        .\python.exe -m pip install opencv-python-headless==4.8.0.74
-        
-        echo Installiere Rest...
+        echo Installiere TTS direkt von GitHub...
+        .\python.exe -m pip install git+https://github.com/coqui-ai/TTS --no-warn-script-location
+
+    # 9. Restliche Tools (Sicher ist sicher)
+    - name: 📦 Tools Installieren
+      working-directory: Engine
+      shell: cmd
+      run: |
+        echo Installiere Helfer...
+        REM Wir nutzen eine ältere OpenCV Version, um Konflikte zu vermeiden
+        .\python.exe -m pip install "opencv-python-headless<4.10" "opencv-python<4.10"
         .\python.exe -m pip install easyocr keyboard pyautogui pillow soundfile --no-warn-script-location
 
-    # 10. TTS Vorbereitung (Abhängigkeiten manuell installieren)
-    - name: 🛠️ TTS Abhängigkeiten
-      working-directory: Engine
-      shell: cmd
-      run: |
-        echo Installiere TTS Helfer manuell...
-        .\python.exe -m pip install scipy==1.10.1 pandas librosa==0.10.0 numba llvmlite matplotlib
-        .\python.exe -m pip install coqpit trainer pysbd
-        
-        REM Einmal prüfen ob wir noch auf Numpy 1.22 sind
-        .\python.exe -c "import numpy; print(f'Numpy Version: {numpy.__version__}')"
-
-    # 11. TTS Finale (Jetzt ohne Abhängigkeiten installieren, weil wir sie schon haben!)
-    - name: 🗣️ TTS Installation
-      working-directory: Engine
-      shell: cmd
-      run: |
-        echo Installiere TTS Code...
-        .\python.exe -m pip install TTS --no-deps --no-build-isolation --no-warn-script-location
-
-    # 12. Testen (Der Beweis)
-    - name: 🔍 QUALITÄTSKONTROLLE
+    # 10. QUALITÄTSKONTROLLE
+    - name: 🔍 TEST
       working-directory: Engine
       shell: cmd
       run: |
         echo --- TEST KEYBOARD ---
         .\python.exe -c "import keyboard; print('Keyboard: OK')" || exit 1
         
-        echo --- TEST CV2 ---
-        .\python.exe -c "import cv2; print('OpenCV: OK')" || exit 1
-        
         echo --- TEST TTS ---
         .\python.exe -c "import TTS; print('TTS: OK')" || exit 1
 
-    # 13. Zippen
-    - name: 🧹 Aufräumen & Zippen
+    # 11. Aufräumen & Zippen
+    - name: 🧹 Zippen
       working-directory: Engine
       shell: cmd
       run: |
@@ -147,24 +125,23 @@ jobs:
         if exist "Lib\site-packages\torch\test" rmdir /s /q "Lib\site-packages\torch\test"
         
         cd ..
-        7z a -tzip -v1900m LQAG_Engine_V7.zip Engine
+        7z a -tzip -v1900m LQAG_Engine_V8.zip Engine
 
     - name: 🚀 Release Upload
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: Engine-V7-Architect
-        name: "LQAG Engine V7 (Architect Build)"
+        tag_name: Engine-V8-GitMaster
+        name: "LQAG Engine V8 (Git Master Build)"
         body: |
-          ### Engine V7
-          Handgebauter Dependency-Graph.
+          ### Engine V8
+          TTS direkt vom Source Code gebaut.
           
           **Status:**
-          - Numpy: 1.22.4 (Fix)
-          - OpenCV: 4.8 (Fix)
-          - TTS: Manuell integriert
+          - Source: GitHub Master
+          - Numpy: <1.24
           - PyTorch: Cuda 12.1
         draft: false
         prerelease: false
-        files: LQAG_Engine_V7.zip.*
+        files: LQAG_Engine_V8.zip.*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
