@@ -1,4 +1,4 @@
-name: Build Engine (V8 - Git Master)
+name: Build Engine (V9 - Fixed TTS Build)
 
 on:
   workflow_dispatch:
@@ -14,18 +14,18 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v3
 
-    # 1. WICHTIG: MSVC Compiler (für C++ Teile)
+    # 1. MSVC Compiler Setup
     - name: 🛠️ Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
 
-    # 2. System Python (Spender)
+    # 2. System Python (Donor)
     - name: 🐍 Setup System Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10.11' 
         architecture: 'x64'
 
-    # 3. Portable Python laden (Empfänger)
+    # 3. Download Portable Python
     - name: 🐍 Download Portable Python
       shell: cmd
       run: |
@@ -34,7 +34,7 @@ jobs:
         tar -xf python.zip -C Engine
         del python.zip
 
-    # 4. Transplantation (Tkinter)
+    # 4. Tkinter Transplant
     - name: 🏥 Tkinter Transplantieren
       shell: powershell
       run: |
@@ -73,75 +73,106 @@ jobs:
         del get-pip.py
         .\python.exe -m pip install --upgrade pip setuptools wheel
 
-    # 7. MANUELLE ABHÄNGIGKEITEN (Das Sicherheitsnetz)
-    - name: 🧱 Fundament bauen
+    # 7. CRITICAL FIX: Install Build Tools First
+    - name: 🔨 Install Build Dependencies
       working-directory: Engine
       shell: cmd
       run: |
-        echo Installiere kritische Pakete vorab...
-        .\python.exe -m pip install "numpy<1.24" cython
+        echo Installing build tools...
+        .\python.exe -m pip install "numpy<1.24" cython "setuptools<70" "wheel<0.43"
+        .\python.exe -m pip install "packaging>=20.0" "mecab-python3>=1.0.0"
+
+    # 8. Install Core Dependencies (Pre-built wheels)
+    - name: 🧱 Install Core Dependencies
+      working-directory: Engine
+      shell: cmd
+      run: |
+        echo Installing core packages...
         .\python.exe -m pip install scipy pandas librosa matplotlib pysbd tqdm
-        .\python.exe -m pip install coqpit trainer
+        .\python.exe -m pip install coqpit trainer inflect
+        .\python.exe -m pip install gruut[de,en] phonemizer
         
-        echo Installiere PyTorch...
+        echo Installing PyTorch...
         .\python.exe -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --no-warn-script-location
 
-    # 8. TTS INSTALLATION (Vom Master Branch!)
-    # Wir nehmen die Version direkt von GitHub, die ist oft stabiler als PyPI
-    - name: 🗣️ TTS (Git Version)
+    # 9. FIX: Install TTS dependencies manually first
+    - name: 📦 Pre-install TTS Dependencies
       working-directory: Engine
       shell: cmd
       run: |
-        echo Installiere TTS direkt von GitHub...
-        .\python.exe -m pip install git+https://github.com/coqui-ai/TTS --no-warn-script-location
+        echo Installing TTS dependencies separately...
+        .\python.exe -m pip install "jieba" "pypinyin" "anyascii" "unidecode"
+        .\python.exe -m pip install "numba" "llvmlite" 
+        .\python.exe -m pip install "umap-learn" "pysbd"
 
-    # 9. Restliche Tools (Sicher ist sicher)
-    - name: 📦 Tools Installieren
+    # 10. TTS INSTALLATION - Using specific stable version
+    - name: 🗣️ Install TTS
       working-directory: Engine
       shell: cmd
       run: |
-        echo Installiere Helfer...
-        REM Wir nutzen eine ältere OpenCV Version, um Konflikte zu vermeiden
+        echo Installing TTS...
+        REM Try PyPI version first (more stable for Windows builds)
+        .\python.exe -m pip install TTS==0.22.0 --no-warn-script-location || (
+          echo PyPI failed, trying Git...
+          .\python.exe -m pip install git+https://github.com/coqui-ai/TTS.git@v0.22.0 --no-build-isolation --no-warn-script-location
+        )
+
+    # 11. Additional Tools
+    - name: 📦 Install Additional Tools
+      working-directory: Engine
+      shell: cmd
+      run: |
+        echo Installing helper tools...
         .\python.exe -m pip install "opencv-python-headless<4.10" "opencv-python<4.10"
         .\python.exe -m pip install easyocr keyboard pyautogui pillow soundfile --no-warn-script-location
 
-    # 10. QUALITÄTSKONTROLLE
-    - name: 🔍 TEST
+    # 12. Quality Check
+    - name: 🔍 Test Imports
       working-directory: Engine
       shell: cmd
       run: |
         echo --- TEST KEYBOARD ---
-        .\python.exe -c "import keyboard; print('Keyboard: OK')" || exit 1
+        .\python.exe -c "import keyboard; print('✓ Keyboard OK')" || exit 1
         
         echo --- TEST TTS ---
-        .\python.exe -c "import TTS; print('TTS: OK')" || exit 1
+        .\python.exe -c "import TTS; print('✓ TTS OK'); print(TTS.__version__)" || exit 1
+        
+        echo --- TEST TORCH ---
+        .\python.exe -c "import torch; print('✓ Torch OK'); print(torch.__version__)" || exit 1
 
-    # 11. Aufräumen & Zippen
-    - name: 🧹 Zippen
+    # 13. Cleanup & Zip
+    - name: 🧹 Cleanup and Package
       working-directory: Engine
       shell: cmd
       run: |
         .\python.exe -m pip cache purge
         if exist "Lib\site-packages\torch\test" rmdir /s /q "Lib\site-packages\torch\test"
+        if exist "Lib\site-packages\TTS\tests" rmdir /s /q "Lib\site-packages\TTS\tests"
         
         cd ..
-        7z a -tzip -v1900m LQAG_Engine_V8.zip Engine
+        7z a -tzip -v1900m LQAG_Engine_V9.zip Engine
 
     - name: 🚀 Release Upload
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: Engine-V8-GitMaster
-        name: "LQAG Engine V8 (Git Master Build)"
+        tag_name: Engine-V9-Fixed
+        name: "LQAG Engine V9 (Fixed Build)"
         body: |
-          ### Engine V8
-          TTS direkt vom Source Code gebaut.
+          ### Engine V9 - Fixed TTS Build
           
-          **Status:**
-          - Source: GitHub Master
-          - Numpy: <1.24
-          - PyTorch: Cuda 12.1
+          **Changes:**
+          - Fixed TTS compilation issues
+          - Added missing build dependencies
+          - Using stable TTS 0.22.0
+          - Pre-installed all dependencies to avoid build conflicts
+          
+          **Components:**
+          - Python 3.10.11 (Portable)
+          - TTS 0.22.0 with Coqui XTTS
+          - PyTorch with CUDA 12.1
+          - All dependencies pre-compiled
         draft: false
         prerelease: false
-        files: LQAG_Engine_V8.zip.*
+        files: LQAG_Engine_V9.zip.*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
