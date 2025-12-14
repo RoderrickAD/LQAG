@@ -1,110 +1,105 @@
-name: 1. Build Engine (Manual)
+name: Build Engine (GitHub Server)
 
 on:
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   build-engine:
     runs-on: windows-latest
     
     steps:
-    - name: Checkout Repo
+    - name: Checkout
       uses: actions/checkout@v3
 
-    # 1. Full Python (Spender)
-    - name: 🐍 Setup Full Python (Source)
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10.11' 
-        architecture: 'x64'
-
-    # 2. Embeddable Python (Empfänger)
-    - name: 🐍 Download Embeddable Python (Target)
-      shell: cmd
-      run: |
-        curl -L -o python.zip https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip
-        mkdir Engine
-        tar -xf python.zip -C Engine
-        del python.zip
-
-    # 3. TRANSPLANTATION (Tkinter)
-    - name: 🏥 Tkinter Transplantieren
+    # 1. Wir nutzen das offizielle Python Nuget Paket (Enthält Tkinter & alles!)
+    - name: 🐍 Download Python Nuget (Portable Full)
       shell: powershell
       run: |
-        $source = (python -c "import sys; print(sys.prefix)")
-        $dest = "$pwd\Engine"
+        Write-Host "Lade Python 3.10.11 Nuget Paket..."
+        $url = "https://www.nuget.org/api/v2/package/python/3.10.11"
+        Invoke-WebRequest -Uri $url -OutFile python_pkg.zip
         
-        New-Item -ItemType Directory -Force -Path "$dest\Lib"
-        New-Item -ItemType Directory -Force -Path "$dest\DLLs"
-
-        copy "$source\DLLs\_tkinter.pyd" "$dest\DLLs\"
-        copy "$source\DLLs\tcl86t.dll" "$dest\"
-        copy "$source\DLLs\tk86t.dll" "$dest\"
+        Write-Host "Entpacke..."
+        Expand-Archive -Path python_pkg.zip -DestinationPath TempPython
         
-        Copy-Item -Path "$source\Lib\tkinter" -Destination "$dest\Lib\tkinter" -Recurse -Force
-        Copy-Item -Path "$source\tcl" -Destination "$dest\tcl" -Recurse -Force
-
-    # 4. CONFIGURATION FIX (.pth)
-    - name: 🔧 Pfade konfigurieren (.pth Datei)
-      working-directory: Engine
-      shell: cmd
-      run: |
-        echo python310.zip> python310._pth
-        echo .>> python310._pth
-        echo Lib>> python310._pth
-        echo DLLs>> python310._pth
-        echo Lib\site-packages>> python310._pth
-        echo import site>> python310._pth
-
-    # 5. PIP & INSTALLATION (ABSOLUTE PFADE!)
-    - name: 📦 Installation (PowerShell & Absolute Paths)
-      working-directory: Engine
-      shell: powershell
-      run: |
-        # Pip holen
-        Invoke-WebRequest -Uri https://bootstrap.pypa.io/get-pip.py -OutFile get-pip.py
-        .\python.exe get-pip.py --no-warn-script-location
-        Remove-Item get-pip.py
-
-        # Ziel-Pfad ABSOLUT definieren (Das ist der Schlüssel!)
-        # $pwd ist hier .../LQAG/Engine
-        $TargetDir = "$pwd\Lib\site-packages"
-        Write-Host "INSTALLIERE NACH: $TargetDir"
+        # Wir bauen uns unseren sauberen Engine Ordner
+        New-Item -ItemType Directory -Force -Path "Engine"
         
-        New-Item -ItemType Directory -Force -Path $TargetDir
-
-        # Installation starten mit --target
-        Write-Host "--- STARTING PYTORCH ---"
-        .\python.exe -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --target "$TargetDir" --no-user --no-warn-script-location
+        # Wir kopieren nur das 'tools' Verzeichnis, das ist das eigentliche Python
+        Copy-Item -Path "TempPython\tools\*" -Destination "Engine" -Recurse -Force
         
-        Write-Host "--- STARTING REQUIREMENTS ---"
-        .\python.exe -m pip install numpy==1.26.4 --target "$TargetDir" --no-user --no-warn-script-location
-        .\python.exe -m pip install TTS easyocr pyaudio keyboard pyautogui opencv-python pillow soundfile --target "$TargetDir" --no-user --no-warn-script-location
-
         # Aufräumen
-        .\python.exe -m pip cache purge
-        if (Test-Path "Lib\site-packages\torch\test") { Remove-Item -Recurse -Force "Lib\site-packages\torch\test" }
-        if (Test-Path "Lib\site-packages\TTS\bin") { Remove-Item -Recurse -Force "Lib\site-packages\TTS\bin" }
+        Remove-Item python_pkg.zip
+        Remove-Item -Recurse -Force TempPython
+        
+        Write-Host "Engine Basis steht. Prüfe Tkinter..."
+        if (Test-Path "Engine\Lib\tkinter") { Write-Host "✔ Tkinter gefunden!" -ForegroundColor Green }
+        else { Write-Host "❌ Tkinter fehlt!" -ForegroundColor Red; exit 1 }
 
-    - name: 🤐 Engine Zippen
+    # 2. Pip installieren
+    - name: 🔧 Pip installieren
+      working-directory: Engine
       shell: cmd
       run: |
-        7z a -tzip -v1900m LQAG_Engine_v1.zip Engine
+        curl -L -o get-pip.py https://bootstrap.pypa.io/get-pip.py
+        .\python.exe get-pip.py --no-warn-script-location
+        del get-pip.py
+
+    # 3. WICHTIG: Build Tools vorbereiten (gegen den C++ Fehler)
+    - name: 🔨 Build-Umgebung vorbereiten
+      working-directory: Engine
+      shell: cmd
+      run: |
+        REM Wir aktualisieren die Tools, damit TTS kompiliert werden kann
+        .\python.exe -m pip install --upgrade pip setuptools wheel
+
+    # 4. Die schweren Pakete installieren
+    # Wir nutzen --prefer-binary, damit er nicht versucht, alles selbst zu kompilieren
+    - name: 📦 KI & Treiber installieren
+      working-directory: Engine
+      shell: cmd
+      run: |
+        echo --- INSTALLIERE PYTORCH ---
+        .\python.exe -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --no-warn-script-location
+
+        echo --- INSTALLIERE REST ---
+        .\python.exe -m pip install numpy==1.26.4 --no-warn-script-location
+        
+        REM Hier passiert die Magie: Wir hoffen auf Wheels, sonst baut er es (Server hat C++ Tools)
+        .\python.exe -m pip install TTS easyocr pyaudio keyboard pyautogui opencv-python pillow soundfile --prefer-binary --no-warn-script-location
+
+        echo --- BEREINIGEN ---
+        .\python.exe -m pip cache purge
+        rmdir /s /q "Lib\site-packages\torch\test"
+        rmdir /s /q "Lib\site-packages\TTS\bin"
+
+    # 5. Zippen und Uploaden
+    - name: 🤐 Engine Zippen
+      run: |
+        7z a -tzip -v1900m LQAG_Engine_Final.zip Engine
 
     - name: 🚀 Release erstellen
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: Engine-v1.5
-        name: "LQAG Engine Base v1.5 (Absolute Power)"
+        tag_name: Engine-Final-GithubBuilt
+        name: "LQAG Engine (Complete & Portable)"
         body: |
-          ### WICHTIG:
-          1. Lade **beide** Dateien (`.001` und `.002`).
-          2. Rechtsklick auf `.001` -> 7-Zip -> Hier entpacken.
+          ### Endlich komplett!
+          Diese Engine wurde vollautomatisch auf GitHub gebaut.
+          
+          **Enthält:**
+          - Python 3.10 (Portable)
+          - Tkinter (GUI)
+          - PyTorch (GPU)
+          - TTS (Voice) & OCR
+          - Keyboard Hook
+          
+          **Anleitung:**
+          1. Lade alle Parts (`.001`, `.002` etc).
+          2. Rechtsklick auf `.001` -> Entpacken.
+          3. Den Ordner `Engine` in deinen Projektordner schieben.
         draft: false
         prerelease: false
-        files: LQAG_Engine_v1.zip.*
+        files: LQAG_Engine_Final.zip.*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
