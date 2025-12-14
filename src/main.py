@@ -18,20 +18,24 @@ from audio_engine import AudioEngine
 from screen_tool import SnippingTool
 from npc_manager import NpcManager
 
-# --- LOGGER KLASSE (Leitet Konsole in Datei um) ---
+# --- LOGGER KLASSE ---
 class Logger(object):
     def __init__(self, filename="debug/system.log"):
         self.terminal = sys.stdout
         self.log = open(filename, "a", encoding="utf-8")
 
     def write(self, message):
-        self.terminal.write(message) # Weiterhin in Konsole (falls offen)
-        self.log.write(message)
-        self.log.flush()
+        try:
+            self.terminal.write(message)
+            self.log.write(message)
+            self.log.flush()
+        except: pass
 
     def flush(self):
-        self.terminal.flush()
-        self.log.flush()
+        try:
+            self.terminal.flush()
+            self.log.flush()
+        except: pass
 
 # --- HAUPT APP ---
 class App:
@@ -42,10 +46,10 @@ class App:
         sys.stderr = sys.stdout
         print(f"=== NEUER START: {datetime.datetime.now()} ===")
 
-        # 2. Splash Screen erstellen (Ladebildschirm)
+        # 2. Splash Screen erstellen
         self.splash = tk.Tk()
-        self.splash.overrideredirect(True) # Kein Fensterrahmen
-        # Zentrieren
+        self.splash.overrideredirect(True)
+        
         w, h = 400, 150
         ws = self.splash.winfo_screenwidth()
         hs = self.splash.winfo_screenheight()
@@ -60,19 +64,16 @@ class App:
         self.lbl_loading = tk.Label(self.splash, text="Lade KI-Modelle... (Das dauert kurz)", bg="#222", fg="white")
         self.lbl_loading.pack()
         
-        # Ladebalken (Indeterminate)
         self.progress_splash = ttk.Progressbar(self.splash, mode='indeterminate')
         self.progress_splash.pack(fill=tk.X, padx=20, pady=20)
-        self.progress_splash.start(10)
+        self.progress_splash.start(15) # Langsamere Animation
 
         # 3. Engines im Hintergrund laden
         threading.Thread(target=self.load_engines, daemon=True).start()
         
-        # Splash Loop starten
         self.splash.mainloop()
 
     def load_engines(self):
-        """Lädt alles Schwere im Hintergrund"""
         try:
             self.base_dir = os.path.dirname(os.path.abspath(__file__))
             self.root_dir = os.path.dirname(self.base_dir)
@@ -84,16 +85,23 @@ class App:
             self.reader = easyocr.Reader(['de', 'en'], gpu=True)
             self.audio = AudioEngine()
             
-            # Wenn fertig, Splash schließen und Main UI öffnen
-            self.splash.after(0, self.start_main_ui)
+            # WICHTIG: Aufruf über after(), damit es im GUI Thread läuft
+            self.splash.after(100, self.start_main_ui)
             
         except Exception as e:
             print(f"CRASH BEIM LADEN: {e}")
-            self.splash.destroy()
+            # Versuchen, sauber zu beenden
+            self.splash.after(0, self.splash.destroy)
 
     def start_main_ui(self):
-        """Baut das Hauptfenster auf, nachdem geladen wurde"""
-        self.splash.destroy()
+        """Baut das Hauptfenster auf"""
+        try:
+            # FIX: Erst Animation stoppen!
+            self.progress_splash.stop()
+            self.splash.update_idletasks() # Warten bis UI sich beruhigt hat
+            self.splash.destroy() # Jetzt sicher zerstören
+        except:
+            pass # Falls es schon weg ist, egal
         
         self.root = tk.Tk()
         self.root.title("LQAG - Vorleser")
@@ -101,30 +109,26 @@ class App:
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1e1e1e")
         
-        # UI Aufbau
         self.setup_ui()
         
-        # Hotkeys
         keyboard.add_hotkey('f9', self.scan_once)
         keyboard.add_hotkey('f10', self.start_learning_sequence)
         
-        # Cache laden
         self.template_tl = None
         self.template_br = None
         self.current_area = None
         self.is_scanning = False
         
-        self.load_cached_templates()
+        # Cache laden (verzögert, damit UI erst sichtbar wird)
+        self.root.after(500, self.load_cached_templates)
         
         self.root.mainloop()
 
     def setup_ui(self):
-        # Header
         lbl_info = tk.Label(self.root, text="F10: Ecken lernen | F9: Vorlesen",
                            bg="#1e1e1e", fg="#cccccc", font=("Arial", 10))
         lbl_info.pack(pady=10)
 
-        # Buttons
         btn_frame = tk.Frame(self.root, bg="#1e1e1e")
         btn_frame.pack(pady=5)
         
@@ -136,37 +140,30 @@ class App:
                                   command=self.scan_once, state=tk.DISABLED, bg="#28a745", fg="white", width=20)
         self.btn_read.pack(side=tk.LEFT, padx=5)
 
-        # Audio Stop
         ctrl_frame = tk.Frame(self.root, bg="#1e1e1e")
         ctrl_frame.pack(pady=10)
         self.btn_stop_audio = tk.Button(ctrl_frame, text="⏹ STOPP", 
                                         command=self.stop_audio, bg="#dc3545", fg="white", font=("Arial", 9, "bold"))
         self.btn_stop_audio.pack(side=tk.LEFT, padx=5)
         
-        # Fortschrittsbalken (Lesefortschritt)
         self.lbl_progress = tk.Label(self.root, text="", bg="#1e1e1e", fg="white", font=("Arial", 8))
         self.lbl_progress.pack()
         
         self.progress_read = ttk.Progressbar(self.root, orient="horizontal", length=500, mode="determinate")
         self.progress_read.pack(pady=5)
 
-        # Log Box
         self.log_box = tk.Text(self.root, height=15, bg="black", fg="#00ff00", font=("Consolas", 9), insertbackground="white")
         self.log_box.pack(fill="both", expand=True, padx=5, pady=5)
         
-        # Target Status
         self.lbl_target = tk.Label(self.root, text="Ziel: -", bg="#333", fg="yellow", bd=1, relief=tk.SUNKEN, anchor=tk.W)
         self.lbl_target.pack(side=tk.BOTTOM, fill=tk.X)
 
     def log(self, text):
         self.log_box.insert(tk.END, f">> {text}\n")
         self.log_box.see(tk.END)
-        print(text) # Schreibt auch in die Log-Datei via Logger
+        print(text)
 
-    # --- AUDIO CALLBACK ---
     def update_progress(self, current, total):
-        """Wird von AudioEngine aufgerufen"""
-        # Da dies aus einem anderen Thread kommt, nutzen wir root.after
         self.root.after(0, lambda: self._gui_update_progress(current, total))
         
     def _gui_update_progress(self, current, total):
@@ -176,29 +173,18 @@ class App:
         if current >= total:
             self.lbl_progress.config(text="Fertig.")
 
-    # --- IMAGE PRE-PROCESSING (Das verbessert die Erkennung!) ---
     def preprocess_image(self, img_np):
-        # 1. Konvertiere zu OpenCV Format
         img = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-        
-        # 2. Vergrößern (Upscaling) - Faktor 2 oder 3
-        # Das macht kleine Schrift "fetter" und lesbarer
         img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-        
-        # 3. Graustufen
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-        # 4. Optional: Kontrast erhöhen (Threshold)
-        # Wir nutzen Otsu's Binarization, das findet automatisch den besten Wert
         _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        
         return binary
 
-    # --- SCANNING ---
     def scan_once(self):
         if self.is_scanning or not self.current_area: return
         self.is_scanning = True
         self.progress_read["value"] = 0
+        self.lbl_progress.config(text="Lese Text...")
         threading.Thread(target=self._run_scan, daemon=True).start()
 
     def _run_scan(self):
@@ -213,20 +199,15 @@ class App:
             screenshot = pyautogui.screenshot(region=(x, y, w, h))
             img_np = np.array(screenshot)
             
-            # --- NEU: Bild verbessern ---
             processed_img = self.preprocess_image(img_np)
-            
-            # Debug speichern (damit du siehst, was die KI sieht)
             cv2.imwrite(os.path.join(self.debug_dir, "last_scan_processed.png"), processed_img)
             
-            # OCR auf verbessertem Bild
             results = self.reader.readtext(processed_img, detail=0)
             full_text = " ".join(results).strip()
 
             if full_text and len(full_text) > 3:
                 self.log(f"📖 {full_text[:50]}...")
                 if voice_path:
-                    # Callback übergeben!
                     self.audio.speak(full_text, voice_path, on_progress=self.update_progress)
                 else:
                     self.log("⚠️ Keine Stimme.")
@@ -244,7 +225,6 @@ class App:
         self.lbl_progress.config(text="Abgebrochen.")
         self.log("🔇 Stopp.")
 
-    # --- LERNEN & TEMPLATES (Gleich wie vorher, nur gekürzt für Übersicht) ---
     def save_templates(self):
         if self.template_tl is not None and self.template_br is not None:
             cv2.imwrite(os.path.join(self.cache_dir, "last_tl.png"), self.template_tl)
@@ -303,21 +283,4 @@ class App:
             if val_tl < 0.8 or val_br < 0.8: return None
             h_br, w_br, _ = self.template_br.shape
             w = (loc_br[0] + w_br) - loc_tl[0]
-            h = (loc_br[1] + h_br) - loc_tl[1]
-            if w < 10 or h < 10: return None
-            return (loc_tl[0], loc_tl[1], w, h)
-        except: return None
-
-    def highlight_area(self, x, y, w, h, color="red"):
-        try:
-            top = tk.Toplevel(self.root)
-            top.geometry(f"{w}x{h}+{x}+{y}")
-            top.overrideredirect(True)
-            top.attributes("-topmost", True)
-            top.attributes("-alpha", 0.3)
-            top.configure(bg=color)
-            top.after(1000, top.destroy)
-        except: pass
-
-if __name__ == "__main__":
-    App()
+            h
