@@ -3,6 +3,9 @@ name: Build Engine (The Transplant Method)
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-engine:
     runs-on: windows-latest
