@@ -103,3 +103,68 @@ class NpcManager:
                 fsize = f.tell()
                 f.seek(max(fsize - 1024, 0), 0) 
                 lines = f.readlines()
+                
+            if lines:
+                last_line = lines[-1].strip()
+                # Fehlermeldungen ignorieren
+                if "Main.lua" in last_line or "attempt to index" in last_line or not last_line:
+                    return
+
+                if last_line != self.current_target:
+                    self.current_target = last_line
+                    self.determine_gender(self.current_target)
+                    
+                    # Stimmen-Zuweisung prüfen/erstellen
+                    self.assign_voice_if_needed(self.current_target)
+                    
+                    # Info
+                    v_path = self.get_voice_path()
+                    v_name = os.path.basename(v_path) if v_path else "KEINE"
+                    print(f"🎯 Ziel: '{self.current_target}' ({self.gender}) -> {v_name}")
+        except Exception:
+            pass 
+
+    def determine_gender(self, name):
+        self.gender = self.npc_db.get(name, "male")
+
+    def assign_voice_if_needed(self, name):
+        """Prüft, ob der NPC schon eine Stimme hat. Wenn nicht, würfeln & speichern."""
+        
+        # 1. SPECIFIC CHECK (Hat er eine Datei mit seinem Namen?)
+        specific_path = os.path.join(self.voices_dir, "specific", f"{name}.wav")
+        if os.path.exists(specific_path):
+            return # Er hat eine Spezialstimme, wir müssen nichts speichern.
+
+        # 2. MEMORY CHECK (Haben wir ihm schon mal eine gegeben?)
+        if name in self.voice_memory:
+            # Prüfen ob die Datei noch existiert
+            saved_file = self.voice_memory[name]
+            if os.path.exists(saved_file):
+                return # Alles gut, er erinnert sich.
+
+        # 3. NEU ZUWEISEN (Zufällig wählen)
+        pool = self.female_voices if self.gender == "female" else self.male_voices
+        if not pool: return
+
+        # Zufällige Stimme aus dem Pool wählen
+        chosen_voice = random.choice(pool)
+        
+        # Speichern
+        self.voice_memory[name] = chosen_voice
+        self.save_voice_memory()
+        # print(f"🎲 Neue Stimme für {name} gewürfelt: {os.path.basename(chosen_voice)}")
+
+    def get_voice_path(self):
+        name = self.current_target
+        
+        # A. Spezifisch (Vorrang!)
+        specific_path = os.path.join(self.voices_dir, "specific", f"{name}.wav")
+        if os.path.exists(specific_path):
+            return specific_path
+            
+        # B. Aus dem Gedächtnis
+        if name in self.voice_memory:
+            return self.voice_memory[name]
+            
+        # C. Fallback (Sollte eigentlich durch assign_voice_if_needed abgefangen sein)
+        return None
