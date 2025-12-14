@@ -233,31 +233,46 @@ class App:
             target = self.npc_manager.current_target
             voice_path = self.npc_manager.get_voice_path()
             v_name = os.path.basename(voice_path) if voice_path else "Standard"
+            
+            # GUI Update muss im Hauptthread passieren
             self.root.after(0, lambda: self.lbl_target.config(text=f"Ziel: {target} | Stimme: {v_name}"))
 
+            # --- FENSTER VERSTECKEN (FIX) ---
+            # Damit wir uns nicht selbst fotografieren!
+            # Da wir im Thread sind, müssen wir das über after() an den Main-Thread schicken
+            self.root.after(0, self.root.withdraw)
+            time.sleep(0.2) # Kurz warten bis es weg ist
+
+            # 1. POSITION ERMITTELN (VISUELL)
             found_area = self.scan_for_window()
             
-            if found_area:
-                self.current_area = found_area
-                self.log(f"🔍 Fenster gefunden bei: {found_area}")
-                self.highlight_area(*found_area, "green")
-            else:
+            if not found_area:
                 self.log("❌ Fenster optisch nicht gefunden.")
+                self.root.after(0, self.root.deiconify) # Wieder anzeigen
                 self.is_scanning = False
                 return
 
+            self.current_area = found_area
+            self.log(f"🔍 Fenster gefunden bei: {found_area}")
+            
+            # --- SCREENSHOT MACHEN ---
             x, y, w, h = self.current_area
             screenshot = pyautogui.screenshot(region=(x, y, w, h))
             img_np = np.array(screenshot)
             
-            # Debug Raw
+            # --- FENSTER WIEDER ANZEIGEN ---
+            self.root.after(0, self.root.deiconify)
+            
+            # Rahmen zeichnen (nachdem Fenster wieder da ist)
+            self.highlight_area(*found_area, "green")
+
+            # --- VERARBEITUNG ---
+            # Debug speichern
             cv2.imwrite(os.path.join(self.debug_dir, "last_scan_raw.png"), cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR))
             
-            # Bild verbessern
             processed_img = self.preprocess_image(img_np)
             cv2.imwrite(os.path.join(self.debug_dir, "last_scan_processed.png"), processed_img)
             
-            # OCR
             results = self.reader.readtext(processed_img, detail=0, paragraph=True)
             
             self.log("--- TEXT INHALT ---")
@@ -279,6 +294,7 @@ class App:
 
         except Exception as e:
             self.log(f"Scan Fehler: {e}")
+            self.root.after(0, self.root.deiconify) # Sicherstellen, dass es zurückkommt
         finally:
             self.is_scanning = False
 
