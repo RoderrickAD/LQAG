@@ -3,6 +3,7 @@ import torch
 import sounddevice as sd
 import soundfile as sf
 import threading
+import re # Für das Aufteilen von Sätzen
 from TTS.api import TTS
 
 class AudioEngine:
@@ -12,6 +13,7 @@ class AudioEngine:
         self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
         print("✅ Audio-Engine bereit!")
         self.is_playing = False
+        self.stop_signal = False
 
     def speak(self, text, speaker_wav):
         if not text: return
@@ -19,37 +21,69 @@ class AudioEngine:
             print(f"⚠️ FEHLER: Stimmen-Datei fehlt: {speaker_wav}")
             return
 
-        # Falls schon was läuft: Stoppen!
+        # Alte Wiedergabe stoppen
         self.stop()
+        self.stop_signal = False
         
         # Neuen Thread starten
-        threading.Thread(target=self._run_speak, args=(text, speaker_wav)).start()
+        threading.Thread(target=self._run_speak_splitted, args=(text, speaker_wav)).start()
 
     def stop(self):
-        """Stoppt die aktuelle Wiedergabe sofort."""
+        """Sendet Signal zum Stoppen."""
+        self.stop_signal = True
         if self.is_playing:
             sd.stop()
             self.is_playing = False
 
-    def _run_speak(self, text, speaker_wav):
+    def _run_speak_splitted(self, text, speaker_wav):
+        """Zerlegt Text in Sätze und spielt sie nacheinander."""
         try:
-            output_file = "output.wav"
+            # 1. Text säubern und in Sätze splitten
+            # Wir splitten bei . ! ? und behalten das Satzzeichen
+            sentences = re.split(r'(?<=[.!?]) +', text)
             
-            # 1. Generieren (Dauert kurz)
+            for sentence in sentences:
+                if self.stop_signal: 
+                    break # Abbruch durch User
+                
+                sentence = sentence.strip()
+                if len(sentence) < 2: continue # Leere Schnipsel überspringen
+                
+                # Wenn ein Satz IMMER NOCH zu lang ist (>200 Zeichen), müssen wir ihn hart teilen
+                if len(sentence) > 200:
+                    chunks = [sentence[i:i+200] for i in range(0, len(sentence), 200)]
+                else:
+                    chunks = [sentence]
+
+                for chunk in chunks:
+                    if self.stop_signal: break
+                    self._play_single_chunk(chunk, speaker_wav)
+
+        except Exception as e:
+            print(f"❌ Audio-Fehler: {e}")
+            self.is_playing = False
+
+    def _play_single_chunk(self, text_chunk, speaker_wav):
+        """Generiert und spielt ein einzelnes Stück Audio."""
+        try:
+            output_file = "temp_output.wav"
+            
+            # Generieren
             self.tts.tts_to_file(
-                text=text, 
+                text=text_chunk, 
                 file_path=output_file,
                 speaker_wav=speaker_wav, 
                 language="de"
             )
             
-            # 2. Abspielen
+            if self.stop_signal: return
+
+            # Abspielen
             data, fs = sf.read(output_file)
             self.is_playing = True
             sd.play(data, fs)
-            sd.wait() # Wartet bis fertig
+            sd.wait() # Warten bis fertig gesprochen
             self.is_playing = False
             
         except Exception as e:
-            print(f"❌ Audio-Fehler: {e}")
-            self.is_playing = False
+            print(f"❌ Chunk Fehler: {e}")
