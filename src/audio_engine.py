@@ -17,30 +17,34 @@ class AudioEngine:
         
         self.audio_queue = queue.Queue()
         self.is_playing = False
+        self.is_paused = False # NEU
         self.stop_signal = False
         self.playback_thread = None
         self.progress_callback = None
-        
-        # NEU: Lautstärke (Standard 100%)
-        self.volume = 1.0 
+        self.volume = 1.0
 
     def set_volume(self, val_0_to_100):
-        """Setzt Lautstärke basierend auf 0-100 Skala"""
         try:
-            # Umrechnung 0-100 zu 0.0-1.0
-            self.volume = float(val_0_to_100) / 100.0
-            # Begrenzung zur Sicherheit
-            self.volume = max(0.0, min(1.0, self.volume))
+            vol = float(val_0_to_100) / 100.0
+            self.volume = max(0.0, min(1.0, vol))
         except: pass
+
+    def toggle_pause(self):
+        """Schaltet Pause an/aus"""
+        if not self.is_playing: return False
+        self.is_paused = not self.is_paused
+        # Wenn wir pausieren, stoppen wir den aktuellen Sound sofort
+        if self.is_paused:
+            sd.stop()
+        return self.is_paused
 
     def speak(self, text, speaker_wav, save_dir=None, on_progress=None):
         if not text: return
-        if not os.path.exists(speaker_wav): return
-
         self.stop()
         time.sleep(0.1)
         
         self.stop_signal = False
+        self.is_paused = False
         self.is_playing = True
         self.progress_callback = on_progress
 
@@ -51,26 +55,33 @@ class AudioEngine:
     def stop(self):
         self.stop_signal = True
         self.is_playing = False
+        self.is_paused = False
         with self.audio_queue.mutex:
             self.audio_queue.queue.clear()
         sd.stop()
 
     def _producer(self, text, speaker_wav, save_dir):
+        # ... (Identisch wie vorher, keine Änderungen nötig) ...
         try:
             clean_text = text.replace("\n", " ").replace("\r", "")
             clean_text = re.sub(' +', ' ', clean_text)
             
+            # Splitten am Satzende (.!?)
             sentences = re.split(r'(?<=[.!?])\s+', clean_text)
             sentences = [s.strip() for s in sentences if len(s.strip()) > 1]
             total = len(sentences)
             
-            if self.progress_callback: self.progress_callback(0, total)
+            # Initiale Meldung an GUI (Satz 0 von X)
+            if self.progress_callback: 
+                # Wir übergeben jetzt den TEXT des Satzes mit!
+                self.progress_callback(0, total, "")
 
             full_audio_parts = [] 
 
             for i, sentence in enumerate(sentences):
                 if self.stop_signal: return
                 
+                # Chunking Logic (wie vorher)
                 chunks = [sentence]
                 if len(sentence) > 230:
                     chunks = []
@@ -98,7 +109,10 @@ class AudioEngine:
                     )
                     
                     data, fs = sf.read(out_temp)
-                    self.audio_queue.put((data, fs, i + 1, total))
+                    
+                    # WICHTIG: Wir senden jetzt den SATZ-TEXT mit in die Queue
+                    self.audio_queue.put((data, fs, i + 1, total, sentence))
+                    
                     full_audio_parts.append(data)
             
             self.audio_queue.put(None)
@@ -107,16 +121,20 @@ class AudioEngine:
                 try:
                     full_audio = np.concatenate(full_audio_parts)
                     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    filename = f"Recording_{ts}.wav"
-                    sf.write(os.path.join(save_dir, filename), full_audio, 24000)
+                    sf.write(os.path.join(save_dir, f"Recording_{ts}.wav"), full_audio, 24000)
                 except: pass
 
         except Exception as e:
-            print(f"Generator Fehler: {e}")
+            print(f"Gen Error: {e}")
             self.audio_queue.put(None)
 
     def _consumer(self):
         while not self.stop_signal:
+            # 1. PAUSE CHECK
+            if self.is_paused:
+                time.sleep(0.1)
+                continue
+
             try:
                 try:
                     item = self.audio_queue.get(timeout=1)
@@ -124,18 +142,18 @@ class AudioEngine:
 
                 if item is None: break
                 
-                data, fs, cur, tot = item
+                # Entpacken (jetzt mit text_content)
+                data, fs, cur, tot, text_content = item
+                
                 if self.stop_signal: break
 
-                # --- VOLUME APPLY ---
-                # Wir multiplizieren das Numpy Array mit dem Faktor
-                adjusted_data = data * self.volume
-
-                sd.play(adjusted_data, samplerate=24000)
-                sd.wait()
-                
+                # GUI Update VOR dem Abspielen (damit Text synchron erscheint)
                 if self.progress_callback:
-                    self.progress_callback(cur, tot)
+                    self.progress_callback(cur, tot, text_content)
+
+                final_data = data * self.volume
+                sd.play(final_data, samplerate=24000)
+                sd.wait() # Wartet bis Audio fertig ist
 
             except: break
         self.is_playing = False
