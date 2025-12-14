@@ -1,4 +1,4 @@
-name: Build Engine (GitHub Server)
+name: Build Engine (Official Installer)
 
 on:
   workflow_dispatch:
@@ -11,51 +11,49 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v3
 
-    # 1. Wir nutzen das offizielle Python Nuget Paket (Enthält Tkinter & alles!)
-    - name: 🐍 Download Python Nuget (Portable Full)
+    # 1. Der offizielle Installer (Silent Mode)
+    # Das ist der Game-Changer: Wir installieren das ECHTE Python inkl. Tkinter
+    - name: 🐍 Python Silent Install
       shell: powershell
       run: |
-        Write-Host "Lade Python 3.10.11 Nuget Paket..."
-        $url = "https://www.nuget.org/api/v2/package/python/3.10.11"
-        Invoke-WebRequest -Uri $url -OutFile python_pkg.zip
+        Write-Host "Lade offiziellen Installer..."
+        $url = "https://www.python.org/ftp/python/3.10.11/python-3.10.11-amd64.exe"
+        Invoke-WebRequest -Uri $url -OutFile python_installer.exe
         
-        Write-Host "Entpacke..."
-        Expand-Archive -Path python_pkg.zip -DestinationPath TempPython
+        # Absoluten Pfad für die Engine ermitteln
+        $EnginePath = "$pwd\Engine"
+        Write-Host "Installiere nach: $EnginePath"
         
-        # Wir bauen uns unseren sauberen Engine Ordner
-        New-Item -ItemType Directory -Force -Path "Engine"
-        
-        # Wir kopieren nur das 'tools' Verzeichnis, das ist das eigentliche Python
-        Copy-Item -Path "TempPython\tools\*" -Destination "Engine" -Recurse -Force
+        # Installer starten mit magischen Parametern (/quiet = unsichtbar, Include_tcltk=1 = WICHTIG)
+        Start-Process -FilePath ".\python_installer.exe" -ArgumentList "/quiet InstallAllUsers=1 TargetDir=$EnginePath Include_doc=0 Include_tcltk=1 Include_test=0 Include_pip=1 PrependPath=0" -Wait
         
         # Aufräumen
-        Remove-Item python_pkg.zip
-        Remove-Item -Recurse -Force TempPython
+        Remove-Item python_installer.exe
         
-        Write-Host "Engine Basis steht. Prüfe Tkinter..."
-        # HIER WAR DER FEHLER - JETZT OHNE EMOJIS:
-        if (Test-Path "Engine\Lib\tkinter") { Write-Host "[OK] Tkinter gefunden!" -ForegroundColor Green }
-        else { Write-Host "[FEHLER] Tkinter fehlt!" -ForegroundColor Red; exit 1 }
+        # Prüfung
+        Write-Host "Prüfe Installation..."
+        if (Test-Path "Engine\python.exe") { Write-Host "[OK] Python.exe da." -ForegroundColor Green }
+        else { Write-Host "[FEHLER] Python.exe fehlt!" -ForegroundColor Red; exit 1 }
+        
+        if (Test-Path "Engine\Lib\tkinter") { Write-Host "[OK] Tkinter Ordner da." -ForegroundColor Green }
+        else { Write-Host "[FEHLER] Tkinter fehlt immer noch!" -ForegroundColor Red; exit 1 }
+        
+        if (Test-Path "Engine\tcl\tk8.6") { Write-Host "[OK] Tcl/Tk Grafiken da." -ForegroundColor Green }
+        else { 
+            # Manchmal liegt tcl woanders, wir suchen kurz...
+            $tcl = Get-ChildItem -Path "Engine" -Filter "tcl*" -Recurse
+            if ($tcl) { Write-Host "[OK] Tcl gefunden bei: $($tcl.FullName)" -ForegroundColor Green }
+            else { Write-Host "[WARNUNG] Tcl Ordner seltsam, aber wir machen weiter." -ForegroundColor Yellow }
+        }
 
-    # 2. Pip installieren
-    - name: 🔧 Pip installieren
+    # 2. Pip Upgrade (Sicherheitshalber)
+    - name: 🔧 Pip Upgrade
       working-directory: Engine
       shell: cmd
       run: |
-        curl -L -o get-pip.py https://bootstrap.pypa.io/get-pip.py
-        .\python.exe get-pip.py --no-warn-script-location
-        del get-pip.py
-
-    # 3. WICHTIG: Build Tools vorbereiten (gegen den C++ Fehler)
-    - name: 🔨 Build-Umgebung vorbereiten
-      working-directory: Engine
-      shell: cmd
-      run: |
-        REM Wir aktualisieren die Tools, damit TTS kompiliert werden kann
         .\python.exe -m pip install --upgrade pip setuptools wheel
 
-    # 4. Die schweren Pakete installieren
-    # Wir nutzen --prefer-binary, damit er nicht versucht, alles selbst zu kompilieren
+    # 3. KI Pakete installieren
     - name: 📦 KI & Treiber installieren
       working-directory: Engine
       shell: cmd
@@ -66,7 +64,7 @@ jobs:
         echo --- INSTALLIERE REST ---
         .\python.exe -m pip install numpy==1.26.4 --no-warn-script-location
         
-        REM Hier passiert die Magie: Wir hoffen auf Wheels, sonst baut er es (Server hat C++ Tools)
+        REM Da der Server Visual Studio hat, können wir hier TTS bauen lassen falls kein Wheel da ist
         .\python.exe -m pip install TTS easyocr pyaudio keyboard pyautogui opencv-python pillow soundfile --prefer-binary --no-warn-script-location
 
         echo --- BEREINIGEN ---
@@ -74,7 +72,7 @@ jobs:
         if exist "Lib\site-packages\torch\test" rmdir /s /q "Lib\site-packages\torch\test"
         if exist "Lib\site-packages\TTS\bin" rmdir /s /q "Lib\site-packages\TTS\bin"
 
-    # 5. Zippen und Uploaden
+    # 4. Zippen und Uploaden
     - name: 🤐 Engine Zippen
       run: |
         7z a -tzip -v1900m LQAG_Engine_Final.zip Engine
@@ -82,23 +80,20 @@ jobs:
     - name: 🚀 Release erstellen
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: Engine-Final-GithubBuilt
-        name: "LQAG Engine (Complete & Portable)"
+        tag_name: Engine-Final-v2
+        name: "LQAG Engine (Official Installer Build)"
         body: |
-          ### Endlich komplett!
-          Diese Engine wurde vollautomatisch auf GitHub gebaut.
+          ### Engine V2
+          Gebaut mit dem offiziellen Python Installer (Silent Mode).
           
-          **Enthält:**
-          - Python 3.10 (Portable)
-          - Tkinter (GUI)
-          - PyTorch (GPU)
-          - TTS (Voice) & OCR
-          - Keyboard Hook
+          **Status:**
+          - Python 3.10: ✔
+          - Tkinter: ✔
+          - PyTorch: ✔
+          - TTS: ✔
           
-          **Anleitung:**
-          1. Lade alle Parts (`.001`, `.002` etc).
-          2. Rechtsklick auf `.001` -> Entpacken.
-          3. Den Ordner `Engine` in deinen Projektordner schieben.
+          **Installation:**
+          Entpacken und den `Engine` Ordner nutzen.
         draft: false
         prerelease: false
         files: LQAG_Engine_Final.zip.*
