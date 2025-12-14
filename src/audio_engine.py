@@ -54,43 +54,62 @@ class AudioEngine:
 
     def _producer(self, text, speaker_wav):
         try:
-            # Besserer Splitter (behält Satzzeichen)
-            sentences = re.split(r'(?<=[.!?])\s+', text)
-            sentences = [s for s in sentences if len(s.strip()) > 1]
-            total_sentences = len(sentences)
+            # 1. TEXT SÄUBERN
+            # Zeilenumbrüche durch Leerzeichen ersetzen, damit Sätze nicht zerrissen werden
+            clean_text = text.replace("\n", " ").replace("\r", "")
+            # Doppelte Leerzeichen entfernen
+            clean_text = re.sub(' +', ' ', clean_text)
             
-            # Melden, wie viele Sätze wir haben
+            print(f"🔊 Lese: {clean_text}") # Debug Ausgabe
+
+            # 2. SPLITTEN
+            # Wir splitten nur bei Satzzeichen (. ! ?), gefolgt von Leerzeichen oder Ende
+            # Der Regex schaut nach .!? aber behält sie im Satz
+            sentences = re.split(r'(?<=[.!?])\s+', clean_text)
+            
+            # Leere Elemente filtern
+            sentences = [s.strip() for s in sentences if len(s.strip()) > 1]
+            
+            total_sentences = len(sentences)
             if self.progress_callback:
                 self.progress_callback(0, total_sentences)
 
             for i, sentence in enumerate(sentences):
                 if self.stop_signal: return
                 
-                # Maximale Länge pro Happen begrenzen
-                chunks = [sentence]
-                if len(sentence) > 250:
-                    chunks = [sentence[i:i+250] for i in range(0, len(sentence), 250)]
+                # Wenn der Satz ZU lang ist für XTTS (>250 Zeichen), müssen wir ihn hart teilen
+                chunks = []
+                if len(sentence) > 230:
+                    # Suche nach Kommas oder Semikolons für weicheren Split
+                    sub_parts = re.split(r'(?<=[,;])\s+', sentence)
+                    current_chunk = ""
+                    for part in sub_parts:
+                        if len(current_chunk) + len(part) < 230:
+                            current_chunk += part + " "
+                        else:
+                            chunks.append(current_chunk.strip())
+                            current_chunk = part + " "
+                    if current_chunk: chunks.append(current_chunk.strip())
+                else:
+                    chunks = [sentence]
 
                 for chunk in chunks:
                     if self.stop_signal: return
                     
                     output_path = "temp_gen.wav"
                     
-                    # --- QUALITÄTS UPDATE ---
-                    # temperature=0.7: Weniger "Kreativität", stabileres Sprechen (weniger Lallen)
-                    # speed=1.1: Ein Hauch schneller wirkt oft natürlicher
+                    # XTTS Generierung
                     self.tts.tts_to_file(
                         text=chunk, 
                         file_path=output_path,
                         speaker_wav=speaker_wav, 
                         language="de",
-                        temperature=0.7, 
-                        speed=1.1,
+                        temperature=0.65, # Etwas niedriger für klarere Aussprache
+                        speed=1.05,       # Minimal schneller für besseren Fluss
                         split_sentences=False 
                     )
                     
                     data, fs = sf.read(output_path)
-                    # Wir packen auch den Index dazu, damit der Balken weiß, wo wir sind
                     self.audio_queue.put((data, fs, i + 1, total_sentences))
             
             self.audio_queue.put(None)
