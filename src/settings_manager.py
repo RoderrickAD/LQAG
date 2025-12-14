@@ -8,7 +8,8 @@ class SettingsManager:
             "hotkey_read": "f9",
             "hotkey_learn": "f10",
             "hotkey_stop": "f8",
-            "hotkey_pause": "f7"
+            "hotkey_pause": "f7",
+            "debug_mode": True # Standardmäßig an, User kann es ausschalten
         }
         self.settings = self.load_settings()
 
@@ -18,7 +19,7 @@ class SettingsManager:
         try:
             with open(self.filepath, "r") as f:
                 data = json.load(f)
-                # Fehlende Keys mit Defaults auffüllen
+                # Fehlende Keys auffüllen
                 for k, v in self.defaults.items():
                     if k not in data:
                         data[k] = v
@@ -31,7 +32,7 @@ class SettingsManager:
             with open(self.filepath, "w") as f:
                 json.dump(self.settings, f, indent=4)
         except Exception as e:
-            print(f"Fehler beim Speichern der Settings: {e}")
+            print(f"Fehler beim Speichern: {e}")
 
     def get(self, key):
         return self.settings.get(key, self.defaults.get(key))
