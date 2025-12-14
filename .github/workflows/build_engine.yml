@@ -1,4 +1,4 @@
-name: Build Engine (V11 - Header Fix Clean)
+name: Build Engine (V12 - Audio Fix)
 
 on:
   workflow_dispatch:
@@ -14,18 +14,18 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v3
 
-    # 1. MSVC Compiler (Wichtig!)
+    # 1. MSVC Compiler
     - name: 🛠️ Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
 
-    # 2. System Python (Der Spender für die Header)
+    # 2. System Python (Spender)
     - name: 🐍 Setup System Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10.11' 
         architecture: 'x64'
 
-    # 3. Portable Python laden (Der Patient)
+    # 3. Portable Python laden (Patient)
     - name: 🐍 Download Portable Python
       shell: cmd
       run: |
@@ -34,17 +34,14 @@ jobs:
         tar -xf python.zip -C Engine
         del python.zip
 
-    # 4. DIE OP: Header & Libs transplantieren (Ohne Emojis!)
+    # 4. DIE OP: Header & Libs transplantieren
     - name: 🧠 Header & Libs Transplantieren
       shell: powershell
       run: |
-        # Wir suchen das System-Python
         $DonorPath = python -c "import sys; print(sys.prefix)"
-        Write-Host "Spender-Python gefunden bei: $DonorPath"
-        
         $Dest = "$pwd\Engine"
         
-        # 1. Tkinter (wie immer)
+        # Tkinter
         New-Item -ItemType Directory -Force -Path "$Dest\Lib"
         New-Item -ItemType Directory -Force -Path "$Dest\DLLs"
         copy "$DonorPath\DLLs\_tkinter.pyd" "$Dest\DLLs\"
@@ -53,18 +50,12 @@ jobs:
         Copy-Item -Path "$DonorPath\Lib\tkinter" -Destination "$Dest\Lib\tkinter" -Recurse -Force
         Copy-Item -Path "$DonorPath\tcl" -Destination "$Dest\tcl" -Recurse -Force
 
-        # 2. HIER IST DER FIX FÜR "Python.h not found":
-        # Wir kopieren den 'include' Ordner (da ist Python.h drin)
-        Write-Host "Kopiere Header (include)..."
+        # Header (für TTS Build)
         Copy-Item -Path "$DonorPath\include" -Destination "$Dest\include" -Recurse -Force
-        
-        # Wir kopieren den 'libs' Ordner (für den Linker)
-        Write-Host "Kopiere Libraries (libs)..."
         Copy-Item -Path "$DonorPath\libs" -Destination "$Dest\libs" -Recurse -Force
         
-        # Prüfung (Text bereinigt)
-        if (Test-Path "Engine\include\Python.h") { Write-Host "[OK] Python.h erfolgreich implantiert!" -ForegroundColor Green }
-        else { Write-Host "[FEHLER] Python.h fehlt immer noch!" -ForegroundColor Red; exit 1 }
+        if (Test-Path "Engine\include\Python.h") { Write-Host "[OK] Header implantiert!" }
+        else { Write-Host "[FEHLER] Header fehlen!" -ForegroundColor Red; exit 1 }
 
     # 5. Config Patch
     - name: 🔧 Config Patch
@@ -88,14 +79,14 @@ jobs:
         del get-pip.py
         .\python.exe -m pip install --upgrade pip setuptools wheel
 
-    # 7. Build Tools vorbereiten
+    # 7. Build Tools
     - name: 🔨 Build Tools
       working-directory: Engine
       shell: cmd
       run: |
         .\python.exe -m pip install "numpy<1.24" cython
 
-    # 8. Abhängigkeiten vorinstallieren
+    # 8. Abhängigkeiten
     - name: 🧱 Abhängigkeiten
       working-directory: Engine
       shell: cmd
@@ -108,20 +99,19 @@ jobs:
       working-directory: Engine
       shell: cmd
       run: |
-        echo Versuche TTS Installation...
-        REM Jetzt haben wir Python.h, jetzt sollte er bauen können!
         .\python.exe -m pip install TTS==0.22.0 --no-build-isolation --no-warn-script-location
 
-    # 10. Restliche Tools
+    # 10. Tools & SOUND-FIX
+    # HIER war der Fehler: sounddevice fehlte in der Liste. Jetzt ist es drin.
     - name: 📦 Tools Installieren
       working-directory: Engine
       shell: cmd
       run: |
         .\python.exe -m pip install "opencv-python-headless<4.10" "opencv-python<4.10"
-        .\python.exe -m pip install easyocr keyboard pyautogui pillow soundfile --no-warn-script-location
+        .\python.exe -m pip install easyocr keyboard pyautogui pillow soundfile sounddevice --no-warn-script-location
 
-    # 11. Tests
-    - name: 🔍 TEST
+    # 11. Tests (Jetzt mit Sound-Check!)
+    - name: 🔍 FINALER SYSTEM-TEST
       working-directory: Engine
       shell: cmd
       run: |
@@ -130,6 +120,9 @@ jobs:
         
         echo --- TEST TTS ---
         .\python.exe -c "import TTS; print('TTS: OK')" || exit 1
+        
+        echo --- TEST SOUNDDEVICE ---
+        .\python.exe -c "import sounddevice; print('Sound: OK')" || exit 1
 
     # 12. Cleanup & Zip
     - name: 🧹 Zippen
@@ -137,26 +130,28 @@ jobs:
       shell: cmd
       run: |
         .\python.exe -m pip cache purge
-        
-        REM Wir können den 'include' Ordner wieder löschen, um Platz zu sparen
         rmdir /s /q include
         rmdir /s /q libs
-        
         if exist "Lib\site-packages\torch\test" rmdir /s /q "Lib\site-packages\torch\test"
         
         cd ..
-        7z a -tzip -v1900m LQAG_Engine_V11.zip Engine
+        7z a -tzip -v1900m LQAG_Engine_V12.zip Engine
 
     - name: 🚀 Release Upload
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: Engine-V11-FinalTry
-        name: "LQAG Engine V11 (Header Fix Clean)"
+        tag_name: Engine-V12-AudioFix
+        name: "LQAG Engine V12 (Audio Fixed)"
         body: |
-          ### Engine V11
-          Gezwungener Build mit implantierten Header-Dateien (ohne Emojis).
+          ### Engine V12
+          Behebt den fehlenden Sound-Treiber.
+          
+          **Enthält garantiert:**
+          - TTS
+          - Sounddevice (Neu!)
+          - PyTorch
         draft: false
         prerelease: false
-        files: LQAG_Engine_V11.zip.*
+        files: LQAG_Engine_V12.zip.*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
