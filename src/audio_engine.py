@@ -18,9 +18,9 @@ class AudioEngine:
         except:
             self.device = "cpu"
             
-        # Wir fangen hier Fehler ab, falls TTS gar nicht laden kann
         try:
             print(f"Lade TTS auf {self.device}...")
+            # Wir laden XTTS v2
             self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
         except Exception as e:
             self.log_to_file(f"INIT CRASH: {e}")
@@ -59,7 +59,7 @@ class AudioEngine:
 
     def speak(self, text, speaker_wav, save_dir=None, on_progress=None, debug_mode=False):
         if not self.tts: 
-            self.log_to_file("TTS Engine wurde nicht geladen!")
+            self.log_to_file("TTS Engine ist nicht bereit.")
             return
         if not text: return
         
@@ -87,7 +87,10 @@ class AudioEngine:
         try:
             self.log_to_file(f"Start: {text[:30]}... | Voice: {os.path.basename(speaker_wav)}")
             
+            # 1. Textbereinigung (Erweitert)
             clean_text = text.replace("\n", " ").replace("\r", "")
+            # Entferne seltsame Zeichen, die Audio-Artefakte erzeugen können
+            clean_text = clean_text.replace("’", "'").replace("`", "'").replace("„", '"').replace("“", '"')
             clean_text = re.sub(' +', ' ', clean_text)
             
             sentences = re.split(r'(?<=[.!?])\s+', clean_text)
@@ -102,7 +105,7 @@ class AudioEngine:
             for i, sentence in enumerate(sentences):
                 if self.stop_signal: return
                 
-                # Chunking Logic
+                # Chunking
                 chunks = [sentence]
                 if len(sentence) > 230:
                     chunks = []
@@ -118,33 +121,32 @@ class AudioEngine:
                 for chunk in chunks:
                     if self.stop_signal: return
                     
-                    # --- SICHERHEITS-CHECK VOR DEM CRASH ---
-                    # 1. Ist der Text leer?
-                    if not chunk or not chunk.strip():
-                        self.log_to_file("Überspringe leeren Text-Chunk.")
-                        continue
-                    
-                    # 2. Ist die Audio-Datei WIRKLICH da?
+                    if not chunk or not chunk.strip(): continue
                     if not speaker_wav or not os.path.exists(speaker_wav):
-                        self.log_to_file(f"CRITICAL ERROR: Stimme nicht gefunden: {speaker_wav}")
+                        self.log_to_file(f"Voice file missing: {speaker_wav}")
                         continue
                     
                     out_temp = "temp_gen.wav"
                     
                     try:
+                        # --- HIER IST DAS QUALITÄTS-TUNING ---
                         self.tts.tts_to_file(
                             text=chunk, 
                             file_path=out_temp,
                             speaker_wav=speaker_wav, 
                             language="de",
-                            temperature=0.65, 
-                            speed=1.05,
+                            
+                            # WICHTIGE PARAMETER FÜR BESSEREN KLANG:
+                            temperature=0.75,       # (War 0.65) Höher = Lebendiger / Natürlicher
+                            speed=1.0,              # (War 1.05) Ruhiger, weniger "Gehetzt"
+                            repetition_penalty=2.0, # Verhindert Stottern/Wiederholungen
+                            top_p=0.85,             # Filtert "seltsame" Töne raus
+                            top_k=50,               # Begrenzt die Auswahl der Töne (stabiler)
+                            
                             split_sentences=False
                         )
                     except Exception as e:
-                        # Hier fangen wir den Fehler ab, damit der Thread NICHT stirbt!
-                        self.log_to_file(f"TTS Fehler bei Chunk '{chunk[:10]}...': {e}")
-                        # Wir machen einfach mit dem nächsten Chunk weiter
+                        self.log_to_file(f"TTS Skip: {e}")
                         continue
                     
                     if os.path.exists(out_temp):
@@ -154,7 +156,6 @@ class AudioEngine:
                             full_audio_parts.append(data)
             
             self.audio_queue.put(None)
-            self.log_to_file("Fertig generiert.")
             
             if debug_mode and save_dir and full_audio_parts and not self.stop_signal:
                 try:
@@ -194,7 +195,7 @@ class AudioEngine:
                         sd.play(final_data, samplerate=24000)
                         sd.wait()
                     except Exception as e:
-                        self.log_to_file(f"AUDIO PLAY ERROR: {e}")
+                        self.log_to_file(f"Play Error: {e}")
 
                 except Exception as e:
                     self.log_to_file(f"Consumer Loop Error: {e}")
