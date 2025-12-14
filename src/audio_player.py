@@ -1,89 +1,43 @@
+import os
+import torch
+import sounddevice as sd
+import soundfile as sf
+import numpy as np
 import threading
-import logging
-import time
-import sys
+from TTS.api import TTS
 
-try:
-    import pyaudio
-    import numpy as np
-    PYAUDIO_AVAILABLE = True
-except ImportError as e:
-    PYAUDIO_AVAILABLE = False
-    logging.critical(f"PyAudio fehlt: {e}")
-except Exception as e:
-    PYAUDIO_AVAILABLE = False
-    logging.critical(f"Fehler: {e}")
-
-class AudioPlayer:
+class AudioEngine:
     def __init__(self):
-        self.p = None
-        self.stream = None
-        self.is_playing = False
-        self.stop_event = threading.Event()
-        self.pause_event = threading.Event()
-        self.pause_event.set()
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"🔈 Lade Sprach-KI auf {self.device}...")
+        
+        # Wir laden das Standard-Modell (XTTS v2 ist das beste)
+        # Beim ersten Mal lädt er hier ca. 2GB runter!
+        self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
+        print("✅ Sprach-KI bereit!")
 
-        if not PYAUDIO_AVAILABLE:
-            logging.error("Kein Audio-System.")
+    def speak(self, text):
+        """Liest Text vor (in einem separaten Thread, damit GUI nicht einfriert)"""
+        if not text:
             return
-
-        try:
-            self.p = pyaudio.PyAudio()
-            # Test Init
-            self.p.get_host_api_info_by_index(0)
-            logging.info("Audio-System bereit.")
-        except Exception as e:
-            logging.critical(f"Audio Init Fehler: {e}")
-            self.p = None
-
-    def play_stream(self, audio_generator):
-        if self.p is None:
-            logging.error("Player nicht bereit.")
-            for _ in audio_generator: pass # Leeren
-            return
-
-        self.stop()
-        thread = threading.Thread(target=self._stream_worker, args=(audio_generator,))
+        
+        thread = threading.Thread(target=self._run_speak, args=(text,))
         thread.start()
 
-    def _stream_worker(self, generator):
-        self.is_playing = True
-        self.stop_event.clear()
-        self.pause_event.set()
-        
+    def _run_speak(self, text):
         try:
-            logging.info(">> Stream Start.")
-            self.stream = self.p.open(
-                format=pyaudio.paFloat32,
-                channels=1,
-                rate=24000,
-                output=True
-            )
-
-            for chunk in generator:
-                if self.stop_event.is_set(): break
-                self.pause_event.wait() 
-                if chunk is not None and len(chunk) > 0:
-                    self.stream.write(chunk.tobytes())
+            # Datei temporär erstellen
+            output_file = "output.wav"
             
-            logging.info("<< Stream Ende.")
-
+            # Hier geschieht die Magie: Text zu Audio
+            # speaker="Ana Florence" ist eine gute englische Standardstimme, 
+            # XTTS kann aber auch Deutsch sehr gut damit.
+            self.tts.tts_to_file(text=text, speaker="Ana Florence", language="de", file_path=output_file)
+            
+            # Abspielen
+            data, fs = sf.read(output_file)
+            sd.play(data, fs)
+            sd.wait()
+            
         except Exception as e:
-            logging.error(f"Stream Fehler: {e}")
-        finally:
-            self.is_playing = False
-            if self.stream:
-                try:
-                    self.stream.stop_stream()
-                    self.stream.close()
-                except: pass
-
-    def stop(self):
-        if self.is_playing:
-            self.stop_event.set()
-
-    def toggle_pause(self):
-        if self.pause_event.is_set():
-            self.pause_event.clear()
-        else:
-            self.pause_event.set()
+            print(f"❌ Fehler beim Sprechen: {e}")
