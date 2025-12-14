@@ -6,32 +6,25 @@ import threading
 import queue
 import re
 import time
+import numpy as np # Wichtig für Audio-Zusammenfügen
 from TTS.api import TTS
+import datetime
 
 class AudioEngine:
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"🔈 Lade XTTS Sprach-KI auf {self.device}...")
-        
-        # XTTS laden
+        # Initialisierung
         self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
-        print("✅ Audio-Engine bereit (HQ Streaming)!")
         
         self.audio_queue = queue.Queue()
         self.is_playing = False
         self.stop_signal = False
         self.playback_thread = None
-        self.progress_callback = None # Funktion zum Updaten des Balkens
+        self.progress_callback = None
 
-    def speak(self, text, speaker_wav, on_progress=None):
-        """
-        on_progress: Eine Funktion, die aufgerufen wird, wenn ein Satz fertig ist.
-                     Signatur: callback(current, total)
-        """
+    def speak(self, text, speaker_wav, save_dir=None, on_progress=None):
         if not text: return
-        if not os.path.exists(speaker_wav):
-            print(f"⚠️ Stimme fehlt: {speaker_wav}")
-            return
+        if not os.path.exists(speaker_wav): return
 
         self.stop()
         time.sleep(0.1)
@@ -40,8 +33,7 @@ class AudioEngine:
         self.is_playing = True
         self.progress_callback = on_progress
 
-        # Threads starten
-        threading.Thread(target=self._producer, args=(text, speaker_wav), daemon=True).start()
+        threading.Thread(target=self._producer, args=(text, speaker_wav, save_dir), daemon=True).start()
         self.playback_thread = threading.Thread(target=self._consumer, daemon=True)
         self.playback_thread.start()
 
@@ -52,70 +44,83 @@ class AudioEngine:
             self.audio_queue.queue.clear()
         sd.stop()
 
-    def _producer(self, text, speaker_wav):
+    def _producer(self, text, speaker_wav, save_dir):
         try:
-            # 1. TEXT SÄUBERN
-            # Zeilenumbrüche durch Leerzeichen ersetzen, damit Sätze nicht zerrissen werden
+            # Text reinigen
             clean_text = text.replace("\n", " ").replace("\r", "")
-            # Doppelte Leerzeichen entfernen
             clean_text = re.sub(' +', ' ', clean_text)
             
-            print(f"🔊 Lese: {clean_text}") # Debug Ausgabe
-
-            # 2. SPLITTEN
-            # Wir splitten nur bei Satzzeichen (. ! ?), gefolgt von Leerzeichen oder Ende
-            # Der Regex schaut nach .!? aber behält sie im Satz
+            # Splitten
             sentences = re.split(r'(?<=[.!?])\s+', clean_text)
-            
-            # Leere Elemente filtern
             sentences = [s.strip() for s in sentences if len(s.strip()) > 1]
+            total = len(sentences)
             
-            total_sentences = len(sentences)
-            if self.progress_callback:
-                self.progress_callback(0, total_sentences)
+            if self.progress_callback: self.progress_callback(0, total)
+
+            # Container für das komplette Audio
+            full_audio_parts = [] 
 
             for i, sentence in enumerate(sentences):
                 if self.stop_signal: return
                 
-                # Wenn der Satz ZU lang ist für XTTS (>250 Zeichen), müssen wir ihn hart teilen
-                chunks = []
+                # Chunking für lange Sätze
+                chunks = [sentence]
                 if len(sentence) > 230:
-                    # Suche nach Kommas oder Semikolons für weicheren Split
-                    sub_parts = re.split(r'(?<=[,;])\s+', sentence)
-                    current_chunk = ""
-                    for part in sub_parts:
-                        if len(current_chunk) + len(part) < 230:
-                            current_chunk += part + " "
-                        else:
-                            chunks.append(current_chunk.strip())
-                            current_chunk = part + " "
-                    if current_chunk: chunks.append(current_chunk.strip())
-                else:
-                    chunks = [sentence]
+                    chunks = []
+                    sub = re.split(r'(?<=[,;])\s+', sentence)
+                    curr = ""
+                    for p in sub:
+                        if len(curr) + len(p) < 230: curr += p + " "
+                        else: 
+                            chunks.append(curr.strip())
+                            curr = p + " "
+                    if curr: chunks.append(curr.strip())
 
                 for chunk in chunks:
                     if self.stop_signal: return
                     
-                    output_path = "temp_gen.wav"
-                    
-                    # XTTS Generierung
+                    out_temp = "temp_gen.wav"
                     self.tts.tts_to_file(
                         text=chunk, 
-                        file_path=output_path,
+                        file_path=out_temp,
                         speaker_wav=speaker_wav, 
                         language="de",
-                        temperature=0.65, # Etwas niedriger für klarere Aussprache
-                        speed=1.05,       # Minimal schneller für besseren Fluss
-                        split_sentences=False 
+                        temperature=0.65, 
+                        speed=1.05,
+                        split_sentences=False
                     )
                     
-                    data, fs = sf.read(output_path)
-                    self.audio_queue.put((data, fs, i + 1, total_sentences))
+                    data, fs = sf.read(out_temp)
+                    
+                    # 1. Zur Wiedergabe senden
+                    self.audio_queue.put((data, fs, i + 1, total))
+                    
+                    # 2. Für das Speichern sammeln
+                    full_audio_parts.append(data)
             
+            # Ende Signal für Player
             self.audio_queue.put(None)
+            
+            # --- ALLES SPEICHERN ---
+            if save_dir and full_audio_parts and not self.stop_signal:
+                try:
+                    # Alle Teile zusammenkleben
+                    full_audio = np.concatenate(full_audio_parts)
+                    
+                    # Dateinamen generieren
+                    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"Recording_{ts}.wav"
+                    filepath = os.path.join(save_dir, filename)
+                    
+                    # Speichern (Samplerate ist meistens 24000 bei XTTS)
+                    sf.write(filepath, full_audio, 24000)
+                    print(f"💾 Audio gespeichert: {filepath}") # Landet im Log
+                    
+                except Exception as e:
+                    print(f"Fehler beim Speichern: {e}")
 
         except Exception as e:
-            print(f"❌ Generator Fehler: {e}")
+            print(f"Generator Fehler: {e}")
             self.audio_queue.put(None)
 
     def _consumer(self):
@@ -123,26 +128,18 @@ class AudioEngine:
             try:
                 try:
                     item = self.audio_queue.get(timeout=1)
-                except queue.Empty:
-                    continue
+                except queue.Empty: continue
 
                 if item is None: break
                 
-                data, fs, current_idx, total = item
-                
+                data, fs, cur, tot = item
                 if self.stop_signal: break
 
-                # --- QUALITÄTS FIX: Samplerate erzwingen ---
-                # XTTS ist meistens 24000. Falls sounddevice was anderes denkt, zwingen wir es.
                 sd.play(data, samplerate=24000)
                 sd.wait()
                 
-                # Fortschrittsbalken updaten
-                if self.progress_callback and not self.stop_signal:
-                    self.progress_callback(current_idx, total)
+                if self.progress_callback:
+                    self.progress_callback(cur, tot)
 
-            except Exception as e:
-                print(f"❌ Player Fehler: {e}")
-                break
-        
+            except: break
         self.is_playing = False
