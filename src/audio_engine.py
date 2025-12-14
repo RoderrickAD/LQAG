@@ -9,10 +9,17 @@ import time
 import numpy as np
 from TTS.api import TTS
 import datetime
+import traceback # Damit wir den vollen Fehler sehen
 
 class AudioEngine:
     def __init__(self):
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        # Wir versuchen GPU, aber fangen Fehler ab
+        try:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        except:
+            self.device = "cpu"
+            
+        print(f"Lade TTS auf {self.device}...")
         self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
         
         self.audio_queue = queue.Queue()
@@ -22,6 +29,19 @@ class AudioEngine:
         self.playback_thread = None
         self.progress_callback = None
         self.volume = 1.0
+        
+        # Pfad für Error Log
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.root_dir = os.path.dirname(self.base_dir)
+        self.error_log = os.path.join(self.root_dir, "debug", "audio_error.log")
+
+    def log_to_file(self, msg):
+        """Schreibt Fehler direkt in eine Datei, da wir keine Konsole haben"""
+        try:
+            ts = datetime.datetime.now().strftime("%H:%M:%S")
+            with open(self.error_log, "a", encoding="utf-8") as f:
+                f.write(f"[{ts}] {msg}\n")
+        except: pass
 
     def set_volume(self, val_0_to_100):
         try:
@@ -36,7 +56,6 @@ class AudioEngine:
         return self.is_paused
 
     def speak(self, text, speaker_wav, save_dir=None, on_progress=None, debug_mode=False):
-        """debug_mode: Wenn True, wird eine wav Datei gespeichert"""
         if not text: return
         self.stop()
         time.sleep(0.1)
@@ -60,6 +79,8 @@ class AudioEngine:
 
     def _producer(self, text, speaker_wav, save_dir, debug_mode):
         try:
+            self.log_to_file(f"Starte Generierung für: {text[:20]}...")
+            
             clean_text = text.replace("\n", " ").replace("\r", "")
             clean_text = re.sub(' +', ' ', clean_text)
             
@@ -77,6 +98,7 @@ class AudioEngine:
                 
                 chunks = [sentence]
                 if len(sentence) > 230:
+                    # Einfache Chunking Logik
                     chunks = []
                     sub = re.split(r'(?<=[,;])\s+', sentence)
                     curr = ""
@@ -91,15 +113,22 @@ class AudioEngine:
                     if self.stop_signal: return
                     
                     out_temp = "temp_gen.wav"
-                    self.tts.tts_to_file(
-                        text=chunk, 
-                        file_path=out_temp,
-                        speaker_wav=speaker_wav, 
-                        language="de",
-                        temperature=0.65, 
-                        speed=1.05,
-                        split_sentences=False
-                    )
+                    
+                    # HIER PASSIERT DER ABSTURZ MEISTENS (VRAM)
+                    try:
+                        self.tts.tts_to_file(
+                            text=chunk, 
+                            file_path=out_temp,
+                            speaker_wav=speaker_wav, 
+                            language="de",
+                            temperature=0.65, 
+                            speed=1.05,
+                            split_sentences=False
+                        )
+                    except Exception as e:
+                        self.log_to_file(f"CRASH in TTS Generierung: {e}")
+                        self.log_to_file(traceback.format_exc())
+                        raise e # Weiterwerfen zum äußeren Catch
                     
                     data, fs = sf.read(out_temp)
                     self.audio_queue.put((data, fs, i + 1, total, sentence))
@@ -108,8 +137,8 @@ class AudioEngine:
                         full_audio_parts.append(data)
             
             self.audio_queue.put(None)
+            self.log_to_file("Generierung abgeschlossen.")
             
-            # Nur Speichern wenn Debug an ist!
             if debug_mode and save_dir and full_audio_parts and not self.stop_signal:
                 try:
                     full_audio = np.concatenate(full_audio_parts)
@@ -118,31 +147,43 @@ class AudioEngine:
                 except: pass
 
         except Exception as e:
-            print(f"Gen Error: {e}")
+            self.log_to_file(f"FATAL GENERATOR ERROR: {e}")
             self.audio_queue.put(None)
 
     def _consumer(self):
-        while not self.stop_signal:
-            if self.is_paused:
-                time.sleep(0.1)
-                continue
-            try:
+        try:
+            while not self.stop_signal:
+                if self.is_paused:
+                    time.sleep(0.1)
+                    continue
                 try:
-                    item = self.audio_queue.get(timeout=1)
-                except queue.Empty: continue
+                    try:
+                        item = self.audio_queue.get(timeout=1)
+                    except queue.Empty: continue
 
-                if item is None: break
-                
-                data, fs, cur, tot, text_content = item
-                
-                if self.stop_signal: break
+                    if item is None: break
+                    
+                    data, fs, cur, tot, text_content = item
+                    
+                    if self.stop_signal: break
 
-                if self.progress_callback:
-                    self.progress_callback(cur, tot, text_content)
+                    if self.progress_callback:
+                        self.progress_callback(cur, tot, text_content)
 
-                final_data = data * self.volume
-                sd.play(final_data, samplerate=24000)
-                sd.wait()
+                    final_data = data * self.volume
+                    
+                    # HIER KÖNNTE AUCH EIN FEHLER SEIN (Soundkarte blockiert)
+                    try:
+                        sd.play(final_data, samplerate=24000)
+                        sd.wait()
+                    except Exception as e:
+                        self.log_to_file(f"AUDIO DEVICE ERROR: {e}")
+                        break
 
-            except: break
-        self.is_playing = False
+                except Exception as e:
+                    self.log_to_file(f"Consumer Loop Error: {e}")
+                    break
+        except Exception as e:
+            self.log_to_file(f"Consumer Fatal: {e}")
+        finally:
+            self.is_playing = False
