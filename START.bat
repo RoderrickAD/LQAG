@@ -1,27 +1,43 @@
 @echo off
-title LQAG Launcher
-cls
+cd /d "%~dp0"
+title LQAG - LotRO Audio Guide
+color 0B
 
-REM Pruefung: Ist der Engine-Ordner da?
+echo ===================================================
+echo      LOTRO AUDIO GUIDE (Powered by Engine V11)
+echo ===================================================
+echo.
+
+:: 1. Sicherheits-Check: Ist der Motor da?
 if not exist "Engine\python.exe" (
     color 0C
-    echo [FEHLER] Der Ordner 'Engine' wurde nicht gefunden!
+    echo [FEHLER] Der Ordner "Engine" fehlt!
     echo.
-    echo Bitte stelle sicher, dass du:
-    REM WICHTIG: Hier keine runden Klammern benutzen, das verwirrt Batch!
-    echo 1. Die 'LQAG_Engine_v1.zip' [Engine Base] heruntergeladen und entpackt hast.
-    echo 2. Dass der Ordner 'Engine' direkt neben dieser 'START.bat' liegt.
+    echo Bitte lade die "LQAG_Engine_V11.zip" von GitHub herunter
+    echo und entpacke sie genau hier, sodass der Ordner "Engine" sichtbar ist.
     echo.
     pause
     exit
 )
 
-echo Starte LQAG...
-REM Wir nutzen das Python aus dem Engine-Ordner
-".\Engine\python.exe" ".\src\main.py"
+:: 2. Starten
+echo [INFO] Starte System...
+echo [INFO] Lade Python Umgebung...
+echo.
+echo HINWEIS: Das schwarze Fenster muss offen bleiben!
+echo.
 
-if %errorlevel% neq 0 (
+"Engine\python.exe" "src\main.py"
+
+:: 3. Fehler-Fangnetz (Falls es abstürzt)
+if %ERRORLEVEL% NEQ 0 (
+    color 0C
     echo.
-    echo [CRASH] Das Programm wurde unerwartet beendet.
+    echo ===================================================
+    echo   KRITISCHER FEHLER - PROGRAMM ABGESTUERZT
+    echo ===================================================
+    echo Bitte mache einen Screenshot von dem Text oben drueber
+    echo und zeige ihn dem Entwickler.
+    echo ===================================================
     pause
 )
