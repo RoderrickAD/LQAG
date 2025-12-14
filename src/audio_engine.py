@@ -3,87 +3,124 @@ import torch
 import sounddevice as sd
 import soundfile as sf
 import threading
-import re # Für das Aufteilen von Sätzen
+import queue
+import re
+import time
 from TTS.api import TTS
 
 class AudioEngine:
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"🔈 Lade XTTS Sprach-KI auf {self.device}...")
+        
+        # XTTS laden
         self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
-        print("✅ Audio-Engine bereit!")
+        print("✅ Audio-Engine bereit (Streaming Modus)!")
+        
+        # Warteschlange für Audio-Schnipsel
+        self.audio_queue = queue.Queue()
         self.is_playing = False
         self.stop_signal = False
+        self.playback_thread = None
 
     def speak(self, text, speaker_wav):
+        """Startet den Prozess: Generator füllt die Queue, Player leert sie."""
         if not text: return
-        if not speaker_wav or not os.path.exists(speaker_wav):
-            print(f"⚠️ FEHLER: Stimmen-Datei fehlt: {speaker_wav}")
+        if not os.path.exists(speaker_wav):
+            print(f"⚠️ Stimme fehlt: {speaker_wav}")
             return
 
-        # Alte Wiedergabe stoppen
+        # 1. Alles Alte stoppen
         self.stop()
-        self.stop_signal = False
+        time.sleep(0.1) # Kurz warten bis alles ruhig ist
         
-        # Neuen Thread starten
-        threading.Thread(target=self._run_speak_splitted, args=(text, speaker_wav)).start()
+        self.stop_signal = False
+        self.is_playing = True
+
+        # 2. Generator-Thread starten (Der "Koch", der Audio zubereitet)
+        threading.Thread(target=self._producer, args=(text, speaker_wav), daemon=True).start()
+        
+        # 3. Player-Thread starten (Der "Kellner", der serviert)
+        self.playback_thread = threading.Thread(target=self._consumer, daemon=True)
+        self.playback_thread.start()
 
     def stop(self):
-        """Sendet Signal zum Stoppen."""
+        """Bricht alles sofort ab."""
         self.stop_signal = True
-        if self.is_playing:
-            sd.stop()
-            self.is_playing = False
-
-    def _run_speak_splitted(self, text, speaker_wav):
-        """Zerlegt Text in Sätze und spielt sie nacheinander."""
-        try:
-            # 1. Text säubern und in Sätze splitten
-            # Wir splitten bei . ! ? und behalten das Satzzeichen
-            sentences = re.split(r'(?<=[.!?]) +', text)
+        self.is_playing = False
+        
+        # Queue leeren, damit nichts Altes mehr nachkommt
+        with self.audio_queue.mutex:
+            self.audio_queue.queue.clear()
             
+        sd.stop()
+
+    def _producer(self, text, speaker_wav):
+        """Zerlegt Text und generiert Audio im Hintergrund."""
+        try:
+            # Text in Sätze zerlegen (bei Punkt, Ausrufezeichen, Fragezeichen)
+            # Dieser Regex behält das Satzzeichen am Ende des Satzes
+            sentences = re.split(r'(?<=[.!?])\s+', text)
+
             for sentence in sentences:
-                if self.stop_signal: 
-                    break # Abbruch durch User
+                if self.stop_signal: return
                 
-                sentence = sentence.strip()
-                if len(sentence) < 2: continue # Leere Schnipsel überspringen
+                clean_text = sentence.strip()
+                if len(clean_text) < 2: continue
                 
-                # Wenn ein Satz IMMER NOCH zu lang ist (>200 Zeichen), müssen wir ihn hart teilen
-                if len(sentence) > 200:
-                    chunks = [sentence[i:i+200] for i in range(0, len(sentence), 200)]
-                else:
-                    chunks = [sentence]
+                # Falls ein Satz immer noch riesig ist, hart teilen
+                chunks = [clean_text]
+                if len(clean_text) > 200:
+                    chunks = [clean_text[i:i+200] for i in range(0, len(clean_text), 200)]
 
                 for chunk in chunks:
-                    if self.stop_signal: break
-                    self._play_single_chunk(chunk, speaker_wav)
+                    if self.stop_signal: return
+                    
+                    # Generieren (blockiert nur diesen Thread, nicht den Player!)
+                    output_path = "temp_gen.wav"
+                    self.tts.tts_to_file(
+                        text=chunk, 
+                        file_path=output_path,
+                        speaker_wav=speaker_wav, 
+                        language="de"
+                    )
+                    
+                    # Daten in den Speicher laden
+                    data, fs = sf.read(output_path)
+                    
+                    # In die Warteschlange schieben
+                    self.audio_queue.put((data, fs))
+            
+            # Signal, dass wir fertig sind
+            self.audio_queue.put(None)
 
         except Exception as e:
-            print(f"❌ Audio-Fehler: {e}")
-            self.is_playing = False
+            print(f"❌ Generator Fehler: {e}")
+            self.audio_queue.put(None)
 
-    def _play_single_chunk(self, text_chunk, speaker_wav):
-        """Generiert und spielt ein einzelnes Stück Audio."""
-        try:
-            output_file = "temp_output.wav"
-            
-            # Generieren
-            self.tts.tts_to_file(
-                text=text_chunk, 
-                file_path=output_file,
-                speaker_wav=speaker_wav, 
-                language="de"
-            )
-            
-            if self.stop_signal: return
+    def _consumer(self):
+        """Liest aus der Warteschlange und spielt ab."""
+        while not self.stop_signal:
+            try:
+                # Warten auf das nächste Audio-Stück (max 1 Sekunde warten, dann prüfen ob stop)
+                try:
+                    item = self.audio_queue.get(timeout=1)
+                except queue.Empty:
+                    continue
 
-            # Abspielen
-            data, fs = sf.read(output_file)
-            self.is_playing = True
-            sd.play(data, fs)
-            sd.wait() # Warten bis fertig gesprochen
-            self.is_playing = False
-            
-        except Exception as e:
-            print(f"❌ Chunk Fehler: {e}")
+                if item is None: # Generator sagt "Bin fertig"
+                    break
+                
+                data, fs = item
+                
+                if self.stop_signal: break
+
+                # Abspielen (blockiert diesen Thread, bis Audio zu Ende ist)
+                sd.play(data, fs)
+                sd.wait()
+
+            except Exception as e:
+                print(f"❌ Player Fehler: {e}")
+                break
+        
+        self.is_playing = False
