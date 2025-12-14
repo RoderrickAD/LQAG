@@ -17,7 +17,7 @@ class AudioEngine:
         
         self.audio_queue = queue.Queue()
         self.is_playing = False
-        self.is_paused = False # NEU
+        self.is_paused = False
         self.stop_signal = False
         self.playback_thread = None
         self.progress_callback = None
@@ -30,15 +30,13 @@ class AudioEngine:
         except: pass
 
     def toggle_pause(self):
-        """Schaltet Pause an/aus"""
         if not self.is_playing: return False
         self.is_paused = not self.is_paused
-        # Wenn wir pausieren, stoppen wir den aktuellen Sound sofort
-        if self.is_paused:
-            sd.stop()
+        if self.is_paused: sd.stop()
         return self.is_paused
 
-    def speak(self, text, speaker_wav, save_dir=None, on_progress=None):
+    def speak(self, text, speaker_wav, save_dir=None, on_progress=None, debug_mode=False):
+        """debug_mode: Wenn True, wird eine wav Datei gespeichert"""
         if not text: return
         self.stop()
         time.sleep(0.1)
@@ -48,7 +46,7 @@ class AudioEngine:
         self.is_playing = True
         self.progress_callback = on_progress
 
-        threading.Thread(target=self._producer, args=(text, speaker_wav, save_dir), daemon=True).start()
+        threading.Thread(target=self._producer, args=(text, speaker_wav, save_dir, debug_mode), daemon=True).start()
         self.playback_thread = threading.Thread(target=self._consumer, daemon=True)
         self.playback_thread.start()
 
@@ -60,20 +58,16 @@ class AudioEngine:
             self.audio_queue.queue.clear()
         sd.stop()
 
-    def _producer(self, text, speaker_wav, save_dir):
-        # ... (Identisch wie vorher, keine Änderungen nötig) ...
+    def _producer(self, text, speaker_wav, save_dir, debug_mode):
         try:
             clean_text = text.replace("\n", " ").replace("\r", "")
             clean_text = re.sub(' +', ' ', clean_text)
             
-            # Splitten am Satzende (.!?)
             sentences = re.split(r'(?<=[.!?])\s+', clean_text)
             sentences = [s.strip() for s in sentences if len(s.strip()) > 1]
             total = len(sentences)
             
-            # Initiale Meldung an GUI (Satz 0 von X)
             if self.progress_callback: 
-                # Wir übergeben jetzt den TEXT des Satzes mit!
                 self.progress_callback(0, total, "")
 
             full_audio_parts = [] 
@@ -81,7 +75,6 @@ class AudioEngine:
             for i, sentence in enumerate(sentences):
                 if self.stop_signal: return
                 
-                # Chunking Logic (wie vorher)
                 chunks = [sentence]
                 if len(sentence) > 230:
                     chunks = []
@@ -109,15 +102,15 @@ class AudioEngine:
                     )
                     
                     data, fs = sf.read(out_temp)
-                    
-                    # WICHTIG: Wir senden jetzt den SATZ-TEXT mit in die Queue
                     self.audio_queue.put((data, fs, i + 1, total, sentence))
                     
-                    full_audio_parts.append(data)
+                    if debug_mode:
+                        full_audio_parts.append(data)
             
             self.audio_queue.put(None)
             
-            if save_dir and full_audio_parts and not self.stop_signal:
+            # Nur Speichern wenn Debug an ist!
+            if debug_mode and save_dir and full_audio_parts and not self.stop_signal:
                 try:
                     full_audio = np.concatenate(full_audio_parts)
                     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -130,11 +123,9 @@ class AudioEngine:
 
     def _consumer(self):
         while not self.stop_signal:
-            # 1. PAUSE CHECK
             if self.is_paused:
                 time.sleep(0.1)
                 continue
-
             try:
                 try:
                     item = self.audio_queue.get(timeout=1)
@@ -142,18 +133,16 @@ class AudioEngine:
 
                 if item is None: break
                 
-                # Entpacken (jetzt mit text_content)
                 data, fs, cur, tot, text_content = item
                 
                 if self.stop_signal: break
 
-                # GUI Update VOR dem Abspielen (damit Text synchron erscheint)
                 if self.progress_callback:
                     self.progress_callback(cur, tot, text_content)
 
                 final_data = data * self.volume
                 sd.play(final_data, samplerate=24000)
-                sd.wait() # Wartet bis Audio fertig ist
+                sd.wait()
 
             except: break
         self.is_playing = False
