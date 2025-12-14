@@ -1,0 +1,50 @@
+name: Create Code Update (Manual Only)
+
+on:
+  # NUR manueller Startknopf
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-update:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    # Wir zippen src, START.bat und optional REPAIR.bat
+    - name: 📦 Zip erstellen
+      run: |
+        zip -r Update_Code.zip src START.bat
+        
+        if [ -f "REPAIR.bat" ]; then
+          zip -r Update_Code.zip REPAIR.bat
+        fi
+
+    # Zeitstempel für eindeutige Version (inklusive Sekunden, damit es keine Konflikte gibt)
+    - name: 📅 Zeitstempel generieren
+      id: date
+      run: echo "timestamp=$(date +'%Y-%m-%d-%H-%M-%S')" >> $GITHUB_OUTPUT
+
+    - name: 🚀 Release hochladen
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: Update-${{ steps.date.outputs.timestamp }}
+        name: "Code Update ${{ steps.date.outputs.timestamp }}"
+        body: |
+          ### ⚡ Manuelles Code Update
+          Enthält nur den Programmcode (`src`) und Start-Dateien.
+          **Keine Engine enthalten.**
+          
+          **Anleitung:**
+          1. Herunterladen.
+          2. In den Hauptordner entpacken.
+          3. "Dateien ersetzen" bestätigen.
+        draft: false
+        prerelease: false
+        files: Update_Code.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
