@@ -15,83 +15,84 @@ class AudioEngine:
         
         # XTTS laden
         self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
-        print("✅ Audio-Engine bereit (Streaming Modus)!")
+        print("✅ Audio-Engine bereit (HQ Streaming)!")
         
-        # Warteschlange für Audio-Schnipsel
         self.audio_queue = queue.Queue()
         self.is_playing = False
         self.stop_signal = False
         self.playback_thread = None
+        self.progress_callback = None # Funktion zum Updaten des Balkens
 
-    def speak(self, text, speaker_wav):
-        """Startet den Prozess: Generator füllt die Queue, Player leert sie."""
+    def speak(self, text, speaker_wav, on_progress=None):
+        """
+        on_progress: Eine Funktion, die aufgerufen wird, wenn ein Satz fertig ist.
+                     Signatur: callback(current, total)
+        """
         if not text: return
         if not os.path.exists(speaker_wav):
             print(f"⚠️ Stimme fehlt: {speaker_wav}")
             return
 
-        # 1. Alles Alte stoppen
         self.stop()
-        time.sleep(0.1) # Kurz warten bis alles ruhig ist
+        time.sleep(0.1)
         
         self.stop_signal = False
         self.is_playing = True
+        self.progress_callback = on_progress
 
-        # 2. Generator-Thread starten (Der "Koch", der Audio zubereitet)
+        # Threads starten
         threading.Thread(target=self._producer, args=(text, speaker_wav), daemon=True).start()
-        
-        # 3. Player-Thread starten (Der "Kellner", der serviert)
         self.playback_thread = threading.Thread(target=self._consumer, daemon=True)
         self.playback_thread.start()
 
     def stop(self):
-        """Bricht alles sofort ab."""
         self.stop_signal = True
         self.is_playing = False
-        
-        # Queue leeren, damit nichts Altes mehr nachkommt
         with self.audio_queue.mutex:
             self.audio_queue.queue.clear()
-            
         sd.stop()
 
     def _producer(self, text, speaker_wav):
-        """Zerlegt Text und generiert Audio im Hintergrund."""
         try:
-            # Text in Sätze zerlegen (bei Punkt, Ausrufezeichen, Fragezeichen)
-            # Dieser Regex behält das Satzzeichen am Ende des Satzes
+            # Besserer Splitter (behält Satzzeichen)
             sentences = re.split(r'(?<=[.!?])\s+', text)
+            sentences = [s for s in sentences if len(s.strip()) > 1]
+            total_sentences = len(sentences)
+            
+            # Melden, wie viele Sätze wir haben
+            if self.progress_callback:
+                self.progress_callback(0, total_sentences)
 
-            for sentence in sentences:
+            for i, sentence in enumerate(sentences):
                 if self.stop_signal: return
                 
-                clean_text = sentence.strip()
-                if len(clean_text) < 2: continue
-                
-                # Falls ein Satz immer noch riesig ist, hart teilen
-                chunks = [clean_text]
-                if len(clean_text) > 200:
-                    chunks = [clean_text[i:i+200] for i in range(0, len(clean_text), 200)]
+                # Maximale Länge pro Happen begrenzen
+                chunks = [sentence]
+                if len(sentence) > 250:
+                    chunks = [sentence[i:i+250] for i in range(0, len(sentence), 250)]
 
                 for chunk in chunks:
                     if self.stop_signal: return
                     
-                    # Generieren (blockiert nur diesen Thread, nicht den Player!)
                     output_path = "temp_gen.wav"
+                    
+                    # --- QUALITÄTS UPDATE ---
+                    # temperature=0.7: Weniger "Kreativität", stabileres Sprechen (weniger Lallen)
+                    # speed=1.1: Ein Hauch schneller wirkt oft natürlicher
                     self.tts.tts_to_file(
                         text=chunk, 
                         file_path=output_path,
                         speaker_wav=speaker_wav, 
-                        language="de"
+                        language="de",
+                        temperature=0.7, 
+                        speed=1.1,
+                        split_sentences=False 
                     )
                     
-                    # Daten in den Speicher laden
                     data, fs = sf.read(output_path)
-                    
-                    # In die Warteschlange schieben
-                    self.audio_queue.put((data, fs))
+                    # Wir packen auch den Index dazu, damit der Balken weiß, wo wir sind
+                    self.audio_queue.put((data, fs, i + 1, total_sentences))
             
-            # Signal, dass wir fertig sind
             self.audio_queue.put(None)
 
         except Exception as e:
@@ -99,25 +100,27 @@ class AudioEngine:
             self.audio_queue.put(None)
 
     def _consumer(self):
-        """Liest aus der Warteschlange und spielt ab."""
         while not self.stop_signal:
             try:
-                # Warten auf das nächste Audio-Stück (max 1 Sekunde warten, dann prüfen ob stop)
                 try:
                     item = self.audio_queue.get(timeout=1)
                 except queue.Empty:
                     continue
 
-                if item is None: # Generator sagt "Bin fertig"
-                    break
+                if item is None: break
                 
-                data, fs = item
+                data, fs, current_idx, total = item
                 
                 if self.stop_signal: break
 
-                # Abspielen (blockiert diesen Thread, bis Audio zu Ende ist)
-                sd.play(data, fs)
+                # --- QUALITÄTS FIX: Samplerate erzwingen ---
+                # XTTS ist meistens 24000. Falls sounddevice was anderes denkt, zwingen wir es.
+                sd.play(data, samplerate=24000)
                 sd.wait()
+                
+                # Fortschrittsbalken updaten
+                if self.progress_callback and not self.stop_signal:
+                    self.progress_callback(current_idx, total)
 
             except Exception as e:
                 print(f"❌ Player Fehler: {e}")
