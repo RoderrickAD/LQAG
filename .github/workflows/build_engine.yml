@@ -1,4 +1,4 @@
-name: Build Engine (V12 - Audio Fix)
+name: Build Engine (V13 - Version Lock)
 
 on:
   workflow_dispatch:
@@ -18,14 +18,14 @@ jobs:
     - name: 🛠️ Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
 
-    # 2. System Python (Spender)
+    # 2. System Python
     - name: 🐍 Setup System Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10.11' 
         architecture: 'x64'
 
-    # 3. Portable Python laden (Patient)
+    # 3. Portable Python
     - name: 🐍 Download Portable Python
       shell: cmd
       run: |
@@ -34,8 +34,8 @@ jobs:
         tar -xf python.zip -C Engine
         del python.zip
 
-    # 4. DIE OP: Header & Libs transplantieren
-    - name: 🧠 Header & Libs Transplantieren
+    # 4. Header Transplant
+    - name: 🧠 Header Transplantieren
       shell: powershell
       run: |
         $DonorPath = python -c "import sys; print(sys.prefix)"
@@ -50,7 +50,7 @@ jobs:
         Copy-Item -Path "$DonorPath\Lib\tkinter" -Destination "$Dest\Lib\tkinter" -Recurse -Force
         Copy-Item -Path "$DonorPath\tcl" -Destination "$Dest\tcl" -Recurse -Force
 
-        # Header (für TTS Build)
+        # C++ Header
         Copy-Item -Path "$DonorPath\include" -Destination "$Dest\include" -Recurse -Force
         Copy-Item -Path "$DonorPath\libs" -Destination "$Dest\libs" -Recurse -Force
         
@@ -86,23 +86,24 @@ jobs:
       run: |
         .\python.exe -m pip install "numpy<1.24" cython
 
-    # 8. Abhängigkeiten
+    # 8. Abhängigkeiten (MIT FIX!)
     - name: 🧱 Abhängigkeiten
       working-directory: Engine
       shell: cmd
       run: |
-        .\python.exe -m pip install scipy pandas librosa matplotlib pysbd tqdm coqpit trainer
+        REM HIER IST DER FIX: Wir zwingen transformers auf 4.33.0!
+        .\python.exe -m pip install "transformers==4.33.0" scipy pandas librosa matplotlib pysbd tqdm coqpit trainer
+        
         .\python.exe -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --no-warn-script-location
 
-    # 9. TTS INSTALLATION
+    # 9. TTS
     - name: 🗣️ Install TTS
       working-directory: Engine
       shell: cmd
       run: |
         .\python.exe -m pip install TTS==0.22.0 --no-build-isolation --no-warn-script-location
 
-    # 10. Tools & SOUND-FIX
-    # HIER war der Fehler: sounddevice fehlte in der Liste. Jetzt ist es drin.
+    # 10. Tools
     - name: 📦 Tools Installieren
       working-directory: Engine
       shell: cmd
@@ -110,7 +111,7 @@ jobs:
         .\python.exe -m pip install "opencv-python-headless<4.10" "opencv-python<4.10"
         .\python.exe -m pip install easyocr keyboard pyautogui pillow soundfile sounddevice --no-warn-script-location
 
-    # 11. Tests (Jetzt mit Sound-Check!)
+    # 11. Tests
     - name: 🔍 FINALER SYSTEM-TEST
       working-directory: Engine
       shell: cmd
@@ -121,10 +122,10 @@ jobs:
         echo --- TEST TTS ---
         .\python.exe -c "import TTS; print('TTS: OK')" || exit 1
         
-        echo --- TEST SOUNDDEVICE ---
-        .\python.exe -c "import sounddevice; print('Sound: OK')" || exit 1
+        echo --- TEST TRANSFORMERS ---
+        .\python.exe -c "import transformers; print(f'Transformers: {transformers.__version__}')" || exit 1
 
-    # 12. Cleanup & Zip
+    # 12. Zip
     - name: 🧹 Zippen
       working-directory: Engine
       shell: cmd
@@ -135,23 +136,24 @@ jobs:
         if exist "Lib\site-packages\torch\test" rmdir /s /q "Lib\site-packages\torch\test"
         
         cd ..
-        7z a -tzip -v1900m LQAG_Engine_V12.zip Engine
+        7z a -tzip -v1900m LQAG_Engine_V13.zip Engine
 
     - name: 🚀 Release Upload
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: Engine-V12-AudioFix
-        name: "LQAG Engine V12 (Audio Fixed)"
+        tag_name: Engine-V13-Stable
+        name: "LQAG Engine V13 (Stable)"
         body: |
-          ### Engine V12
-          Behebt den fehlenden Sound-Treiber.
+          ### Engine V13
+          Transformers Version Lock (Fix für BeamSearchScorer).
           
-          **Enthält garantiert:**
-          - TTS
-          - Sounddevice (Neu!)
+          **Enthält:**
+          - TTS 0.22.0
+          - Transformers 4.33.0 (WICHTIG!)
+          - Sounddevice
           - PyTorch
         draft: false
         prerelease: false
-        files: LQAG_Engine_V12.zip.*
+        files: LQAG_Engine_V13.zip.*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
