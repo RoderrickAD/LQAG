@@ -1,12 +1,14 @@
 name: Update Code Only
 
-# Startet automatisch, wenn du Code hochlädst (Push)
 on:
+  workflow_dispatch:
+    
   push:
     paths:
-      - 'src/**'       # Nur wenn sich was im src Ordner ändert
-      - 'START.bat'    # Oder die Start-Datei
-      - 'resources/**' # Oder Bilder
+      - 'src/**'
+      - 'START.bat'
+      - 'resources/**'
+      - '.github/workflows/update_code.yml' 
 
 permissions:
   contents: write
