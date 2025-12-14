@@ -1,4 +1,4 @@
-name: Build Engine (V10 - Header Fix)
+name: Build Engine (V11 - Header Fix Clean)
 
 on:
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
         tar -xf python.zip -C Engine
         del python.zip
 
-    # 4. DIE OP: Header & Libs transplantieren (Der entscheidende Fix!)
+    # 4. DIE OP: Header & Libs transplantieren (Ohne Emojis!)
     - name: 🧠 Header & Libs Transplantieren
       shell: powershell
       run: |
@@ -62,9 +62,9 @@ jobs:
         Write-Host "Kopiere Libraries (libs)..."
         Copy-Item -Path "$DonorPath\libs" -Destination "$Dest\libs" -Recurse -Force
         
-        # Prüfung
-        if (Test-Path "Engine\include\Python.h") { Write-Host "✔ Python.h erfolgreich implantiert!" -ForegroundColor Green }
-        else { Write-Host "❌ Python.h fehlt immer noch!" -ForegroundColor Red; exit 1 }
+        # Prüfung (Text bereinigt)
+        if (Test-Path "Engine\include\Python.h") { Write-Host "[OK] Python.h erfolgreich implantiert!" -ForegroundColor Green }
+        else { Write-Host "[FEHLER] Python.h fehlt immer noch!" -ForegroundColor Red; exit 1 }
 
     # 5. Config Patch
     - name: 🔧 Config Patch
@@ -138,25 +138,25 @@ jobs:
       run: |
         .\python.exe -m pip cache purge
         
-        REM Wir können den 'include' Ordner wieder löschen, um Platz zu sparen, er wird nur zum Bauen gebraucht
+        REM Wir können den 'include' Ordner wieder löschen, um Platz zu sparen
         rmdir /s /q include
         rmdir /s /q libs
         
         if exist "Lib\site-packages\torch\test" rmdir /s /q "Lib\site-packages\torch\test"
         
         cd ..
-        7z a -tzip -v1900m LQAG_Engine_V10.zip Engine
+        7z a -tzip -v1900m LQAG_Engine_V11.zip Engine
 
     - name: 🚀 Release Upload
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: Engine-V10-HeaderFix
-        name: "LQAG Engine V10 (Dev Headers Included)"
+        tag_name: Engine-V11-FinalTry
+        name: "LQAG Engine V11 (Header Fix Clean)"
         body: |
-          ### Engine V10
-          Gezwungener Build mit implantierten Header-Dateien.
+          ### Engine V11
+          Gezwungener Build mit implantierten Header-Dateien (ohne Emojis).
         draft: false
         prerelease: false
-        files: LQAG_Engine_V10.zip.*
+        files: LQAG_Engine_V11.zip.*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
