@@ -1,4 +1,4 @@
-name: Build Engine (V5 - Bulldozer)
+name: Build Engine (V6 - Conflict Fix)
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v3
 
-    # 1. Compiler aktivieren (WICHTIG für TTS)
+    # 1. Compiler für TTS
     - name: 🛠️ Setup MSVC Compiler
       uses: ilammy/msvc-dev-cmd@v1
 
@@ -34,7 +34,7 @@ jobs:
         tar -xf python.zip -C Engine
         del python.zip
 
-    # 4. Tkinter Transplantation
+    # 4. Transplantation (Tkinter)
     - name: 🏥 Tkinter Transplantieren
       shell: powershell
       run: |
@@ -63,7 +63,7 @@ jobs:
         echo Lib\site-packages>> python310._pth
         echo import site>> python310._pth
 
-    # 6. Pip und Build-Tools holen
+    # 6. Pip & Setup
     - name: 🔧 Pip & Build Tools
       working-directory: Engine
       shell: cmd
@@ -73,36 +73,44 @@ jobs:
         del get-pip.py
         .\python.exe -m pip install --upgrade pip setuptools wheel
 
-    # 7. SCHRITT A: Die einfachen Sachen (Keyboard, OCR)
-    # Wir machen das ZUERST, damit es sicher da ist.
-    - name: 📦 Installiere Keyboard & Tools
+    # 7. DAS FUNDAMENT (Wichtigste Änderung!)
+    # Wir installieren zuerst das alte Numpy, das TTS braucht.
+    - name: 🧱 Fundament legen (Numpy & Cython)
       working-directory: Engine
       shell: cmd
       run: |
-        echo Installiere Keyboard und Helfer...
-        .\python.exe -m pip install keyboard pyautogui easyocr opencv-python pillow soundfile --no-warn-script-location
+        echo Installiere Kompilier-Tools...
+        .\python.exe -m pip install "numpy<1.23" "cython<3"
 
-    # 8. SCHRITT B: PyTorch
-    - name: 📦 Installiere PyTorch
+    # 8. TTS Installieren (bevor irgendwas anderes das Numpy kaputt macht)
+    - name: 🗣️ TTS Installieren
       working-directory: Engine
       shell: cmd
       run: |
-        echo Installiere PyTorch...
+        echo Installiere TTS (Nutze installiertes Numpy)...
+        .\python.exe -m pip install TTS --no-build-isolation --no-deps --no-warn-script-location
+        
+        REM Jetzt die Abhängigkeiten von TTS nachladen, aber Numpy schützen!
+        .\python.exe -m pip install scipy pandas resampy pysbd tqdm "numpy<1.23" --no-warn-script-location
+
+    # 9. PyTorch
+    - name: 🔥 PyTorch Installieren
+      working-directory: Engine
+      shell: cmd
+      run: |
         .\python.exe -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --no-warn-script-location
 
-    # 9. SCHRITT C: TTS (Der Endgegner)
-    # Wir nutzen --no-build-isolation, damit er unsere vorinstallierten Tools nutzt.
-    - name: 📦 Installiere TTS (Bulldozer Mode)
+    # 10. Tools (OCR & Keyboard) - MIT BREMSE
+    # Wir zwingen opencv auf eine Version, die noch mit altem Numpy redet.
+    - name: 📦 Tools Installieren (Safe Mode)
       working-directory: Engine
       shell: cmd
       run: |
-        echo Bereite Umgebung fuer TTS vor...
-        .\python.exe -m pip install numpy==1.22.4 cython scipy --no-warn-script-location
-        
-        echo Installiere TTS...
-        .\python.exe -m pip install TTS --no-build-isolation --no-warn-script-location
+        echo Installiere kompatibles OpenCV und OCR...
+        .\python.exe -m pip install "opencv-python-headless<4.10" "opencv-python<4.10"
+        .\python.exe -m pip install easyocr keyboard pyautogui pillow soundfile --no-warn-script-location
 
-    # 10. NOT-AUS: Prüfung
+    # 11. Testen
     - name: 🔍 FINALER SYSTEM-CHECK
       working-directory: Engine
       shell: cmd
@@ -110,39 +118,37 @@ jobs:
         echo Prüfe TTS...
         .\python.exe -c "import TTS; print('TTS OK')" || exit 1
         
-        echo Prüfe Keyboard...
-        .\python.exe -c "import keyboard; print('Keyboard OK')" || exit 1
+        echo Prüfe OCR...
+        .\python.exe -c "import easyocr; print('OCR OK')" || exit 1
 
-    # 11. Aufräumen (Nur wenn Check bestanden)
-    - name: 🧹 Bereinigen
+    # 12. Aufräumen & Zippen
+    - name: 🧹 Aufräumen & Zippen
       working-directory: Engine
       shell: cmd
       run: |
         .\python.exe -m pip cache purge
         if exist "Lib\site-packages\torch\test" rmdir /s /q "Lib\site-packages\torch\test"
         if exist "Lib\site-packages\TTS\bin" rmdir /s /q "Lib\site-packages\TTS\bin"
-
-    # 12. Upload
-    - name: 🤐 Zippen & Release
-      run: |
-        7z a -tzip -v1900m LQAG_Engine_Complete.zip Engine
         
+        cd ..
+        7z a -tzip -v1900m LQAG_Engine_V6.zip Engine
+
     - name: 🚀 Release Upload
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: Engine-V5-Bulldozer
-        name: "LQAG Engine V5 (Bulldozer Fix)"
+        tag_name: Engine-V6-Stable
+        name: "LQAG Engine V6 (Stable Dependencies)"
         body: |
-          ### Engine V5
-          Gezwungener Build mit MSVC und No-Isolation.
+          ### Engine V6
+          Konfliktfreie Installation.
           
-          **Inhalt:**
-          - Python 3.10 + Tkinter
-          - Keyboard, OCR
-          - PyTorch
-          - TTS (Hoffentlich)
+          **Status:**
+          - Numpy: 1.22 (für TTS)
+          - OpenCV: 4.9 (kompatibel)
+          - TTS: ✔
+          - PyTorch: ✔
         draft: false
         prerelease: false
-        files: LQAG_Engine_Complete.zip.*
+        files: LQAG_Engine_V6.zip.*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
