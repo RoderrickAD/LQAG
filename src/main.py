@@ -10,7 +10,7 @@ import ctypes
 # Pfad-Fix
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# DPI FIX (Damit Screenshots auf 4K Monitoren stimmen)
+# DPI FIX
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
 except Exception:
@@ -18,7 +18,7 @@ except Exception:
         ctypes.windll.user32.SetProcessDPIAware()
     except: pass
 
-# Platzhalter für Lazy Loading
+# Platzhalter
 cv2 = None
 np = None
 easyocr = None
@@ -41,7 +41,7 @@ class App:
         if not os.path.exists(self.cache_dir): os.makedirs(self.cache_dir)
         
         with open(self.log_file_path, "a", encoding="utf-8") as f:
-            f.write(f"\n=== PROGRAMM START (V13 - Strict Visual): {datetime.datetime.now()} ===\n")
+            f.write(f"\n=== PROGRAMM START (V14 - Anti-Ghosting): {datetime.datetime.now()} ===\n")
 
         # 2. Splash Screen
         self.splash = tk.Tk()
@@ -138,7 +138,6 @@ class App:
         self.current_area = None
         self.is_scanning = False
         
-        # Templates laden (aber noch nicht scannen)
         self.root.after(500, self.load_cached_templates)
         self.root.mainloop()
 
@@ -197,19 +196,25 @@ class App:
         self.lbl_progress.config(text=f"Lese Satz {current} von {total}")
         if current >= total: self.lbl_progress.config(text="Fertig.")
 
+    # --- BILDVERARBEITUNG V14 (ANTI-GHOSTING) ---
     def preprocess_image(self, img_np):
-        img = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+        # 1. Bild in Graustufen laden (Farbe ist für Text egal)
+        img = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        
+        # 2. Upscaling (3x) - Macht Schrift fetter und deutlicher
         img = cv2.resize(img, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-        # Rand hinzufügen für besseres OCR
+        
+        # 3. THRESHOLD TO ZERO (Der wichtige Fix!)
+        # Alles was dunkelgrau ist (Hintergrund, Durchscheinen), wird Schwarz.
+        # Alles was hell ist (Text), bleibt unverändert (mit weichen Kanten).
+        # Wert 90 ist ein guter Mittelwert für Questfenster.
+        _, img = cv2.threshold(img, 90, 255, cv2.THRESH_TOZERO)
+        
+        # 4. Padding (Rand hinzufügen für OCR)
         img = cv2.copyMakeBorder(img, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=[0, 0, 0])
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-        enhanced = clahe.apply(gray)
-        kernel = np.array([[0, -1, 0], [-1, 5,-1], [0, -1, 0]])
-        sharpened = cv2.filter2D(enhanced, -1, kernel)
-        return sharpened
+        
+        return img
 
-    # --- HAUPT SCAN LOGIK ---
     def scan_once(self):
         if self.is_scanning: return
         
@@ -230,7 +235,6 @@ class App:
             v_name = os.path.basename(voice_path) if voice_path else "Standard"
             self.root.after(0, lambda: self.lbl_target.config(text=f"Ziel: {target} | Stimme: {v_name}"))
 
-            # 1. POSITION ERMITTELN (VISUELL)
             found_area = self.scan_for_window()
             
             if found_area:
@@ -238,23 +242,22 @@ class App:
                 self.log(f"🔍 Fenster gefunden bei: {found_area}")
                 self.highlight_area(*found_area, "green")
             else:
-                # STRIKTE REGEL: Kein Fallback auf alte Koordinaten!
                 self.log("❌ Fenster optisch nicht gefunden.")
-                self.log("   Tipp: Ist es verdeckt? Hat sich die Grafik geändert? -> F10")
                 self.is_scanning = False
                 return
 
-            # 2. SCREENSHOT & OCR
             x, y, w, h = self.current_area
             screenshot = pyautogui.screenshot(region=(x, y, w, h))
             img_np = np.array(screenshot)
             
-            # Debug speichern
+            # Debug Raw
             cv2.imwrite(os.path.join(self.debug_dir, "last_scan_raw.png"), cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR))
             
+            # Bild verbessern
             processed_img = self.preprocess_image(img_np)
             cv2.imwrite(os.path.join(self.debug_dir, "last_scan_processed.png"), processed_img)
             
+            # OCR
             results = self.reader.readtext(processed_img, detail=0, paragraph=True)
             
             self.log("--- TEXT INHALT ---")
@@ -272,7 +275,7 @@ class App:
                 else:
                     self.log("⚠️ Keine Stimme zugeordnet.")
             else:
-                self.log("⚠️ Kein Text erkannt (Fenster leer?).")
+                self.log("⚠️ Kein Text erkannt.")
 
         except Exception as e:
             self.log(f"Scan Fehler: {e}")
@@ -285,16 +288,13 @@ class App:
         self.lbl_progress.config(text="Abgebrochen.")
         self.log("🔇 Wiedergabe gestoppt.")
 
-    # --- LERNEN & LADEN ---
     def save_templates(self):
         if self.template_tl is not None and self.template_br is not None:
             cv2.imwrite(os.path.join(self.cache_dir, "last_tl.png"), self.template_tl)
             cv2.imwrite(os.path.join(self.cache_dir, "last_br.png"), self.template_br)
-            # Wir speichern KEINE Koordinaten mehr.
             self.log("💾 Templates gespeichert.")
 
     def load_cached_templates(self):
-        """Lädt Templates. Setzt Button auf Grün, wenn Dateien da sind."""
         p_tl = os.path.join(self.cache_dir, "last_tl.png")
         p_br = os.path.join(self.cache_dir, "last_br.png")
         
@@ -333,7 +333,6 @@ class App:
         self.root.deiconify()
         self.save_templates()
         
-        # Test-Scan
         found = self.scan_for_window()
         if found:
             self.current_area = found
