@@ -1,7 +1,7 @@
-name: Create Code Update (Manual Only)
+name: Create Update (Code + Resources)
 
 on:
-  # NUR manueller Startknopf
+  # Nur manueller Startknopf (damit du kontrollierst, wann ein Release kommt)
   workflow_dispatch:
 
 permissions:
@@ -15,16 +15,19 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v3
 
-    # Wir zippen src, START.bat und optional REPAIR.bat
+    # HIER IST DIE ÄNDERUNG:
+    # Wir fügen 'resources' zum zip-Befehl hinzu.
     - name: 📦 Zip erstellen
       run: |
-        zip -r Update_Code.zip src START.bat
+        echo "Erstelle Update-Paket..."
+        zip -r LQAG_Update.zip src resources START.bat
         
+        # Falls REPAIR.bat existiert, packen wir es auch dazu
         if [ -f "REPAIR.bat" ]; then
-          zip -r Update_Code.zip REPAIR.bat
+          zip -r LQAG_Update.zip REPAIR.bat
         fi
 
-    # Zeitstempel für eindeutige Version (inklusive Sekunden, damit es keine Konflikte gibt)
+    # Zeitstempel generieren
     - name: 📅 Zeitstempel generieren
       id: date
       run: echo "timestamp=$(date +'%Y-%m-%d-%H-%M-%S')" >> $GITHUB_OUTPUT
@@ -33,18 +36,22 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: Update-${{ steps.date.outputs.timestamp }}
-        name: "Code Update ${{ steps.date.outputs.timestamp }}"
+        name: "Update ${{ steps.date.outputs.timestamp }} (Code & Voices)"
         body: |
-          ### ⚡ Manuelles Code Update
-          Enthält nur den Programmcode (`src`) und Start-Dateien.
-          **Keine Engine enthalten.**
+          ### 📦 Großes Update (Code & Resources)
+          
+          **Enthält:**
+          - 🧠 Neuer Code (`src/`)
+          - 🗣️ Neue Stimmen & NPC-Listen (`resources/`)
+          - ▶️ Start-Dateien
           
           **Anleitung:**
           1. Herunterladen.
-          2. In den Hauptordner entpacken.
-          3. "Dateien ersetzen" bestätigen.
+          2. In den `LQAG` Hauptordner entpacken.
+          3. Wenn gefragt: **"Dateien im Ziel ersetzen"** klicken.
+          4. Fertig!
         draft: false
         prerelease: false
-        files: Update_Code.zip
+        files: LQAG_Update.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
