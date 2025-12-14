@@ -1,4 +1,4 @@
-name: Build Engine (V9 - Fixed TTS Build)
+name: Build Engine (V10 - Header Fix)
 
 on:
   workflow_dispatch:
@@ -14,18 +14,18 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v3
 
-    # 1. MSVC Compiler Setup
+    # 1. MSVC Compiler (Wichtig!)
     - name: 🛠️ Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
 
-    # 2. System Python (Donor)
+    # 2. System Python (Der Spender für die Header)
     - name: 🐍 Setup System Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10.11' 
         architecture: 'x64'
 
-    # 3. Download Portable Python
+    # 3. Portable Python laden (Der Patient)
     - name: 🐍 Download Portable Python
       shell: cmd
       run: |
@@ -34,22 +34,37 @@ jobs:
         tar -xf python.zip -C Engine
         del python.zip
 
-    # 4. Tkinter Transplant
-    - name: 🏥 Tkinter Transplantieren
+    # 4. DIE OP: Header & Libs transplantieren (Der entscheidende Fix!)
+    - name: 🧠 Header & Libs Transplantieren
       shell: powershell
       run: |
+        # Wir suchen das System-Python
         $DonorPath = python -c "import sys; print(sys.prefix)"
+        Write-Host "Spender-Python gefunden bei: $DonorPath"
+        
         $Dest = "$pwd\Engine"
         
+        # 1. Tkinter (wie immer)
         New-Item -ItemType Directory -Force -Path "$Dest\Lib"
         New-Item -ItemType Directory -Force -Path "$Dest\DLLs"
-
         copy "$DonorPath\DLLs\_tkinter.pyd" "$Dest\DLLs\"
         copy "$DonorPath\DLLs\tcl86t.dll" "$Dest\"
         copy "$DonorPath\DLLs\tk86t.dll" "$Dest\"
-        
         Copy-Item -Path "$DonorPath\Lib\tkinter" -Destination "$Dest\Lib\tkinter" -Recurse -Force
         Copy-Item -Path "$DonorPath\tcl" -Destination "$Dest\tcl" -Recurse -Force
+
+        # 2. HIER IST DER FIX FÜR "Python.h not found":
+        # Wir kopieren den 'include' Ordner (da ist Python.h drin)
+        Write-Host "Kopiere Header (include)..."
+        Copy-Item -Path "$DonorPath\include" -Destination "$Dest\include" -Recurse -Force
+        
+        # Wir kopieren den 'libs' Ordner (für den Linker)
+        Write-Host "Kopiere Libraries (libs)..."
+        Copy-Item -Path "$DonorPath\libs" -Destination "$Dest\libs" -Recurse -Force
+        
+        # Prüfung
+        if (Test-Path "Engine\include\Python.h") { Write-Host "✔ Python.h erfolgreich implantiert!" -ForegroundColor Green }
+        else { Write-Host "❌ Python.h fehlt immer noch!" -ForegroundColor Red; exit 1 }
 
     # 5. Config Patch
     - name: 🔧 Config Patch
@@ -73,106 +88,75 @@ jobs:
         del get-pip.py
         .\python.exe -m pip install --upgrade pip setuptools wheel
 
-    # 7. CRITICAL FIX: Install Build Tools First
-    - name: 🔨 Install Build Dependencies
+    # 7. Build Tools vorbereiten
+    - name: 🔨 Build Tools
       working-directory: Engine
       shell: cmd
       run: |
-        echo Installing build tools...
-        .\python.exe -m pip install "numpy<1.24" cython "setuptools<70" "wheel<0.43"
-        .\python.exe -m pip install "packaging>=20.0" "mecab-python3>=1.0.0"
+        .\python.exe -m pip install "numpy<1.24" cython
 
-    # 8. Install Core Dependencies (Pre-built wheels)
-    - name: 🧱 Install Core Dependencies
+    # 8. Abhängigkeiten vorinstallieren
+    - name: 🧱 Abhängigkeiten
       working-directory: Engine
       shell: cmd
       run: |
-        echo Installing core packages...
-        .\python.exe -m pip install scipy pandas librosa matplotlib pysbd tqdm
-        .\python.exe -m pip install coqpit trainer inflect
-        .\python.exe -m pip install gruut[de,en] phonemizer
-        
-        echo Installing PyTorch...
+        .\python.exe -m pip install scipy pandas librosa matplotlib pysbd tqdm coqpit trainer
         .\python.exe -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --no-warn-script-location
 
-    # 9. FIX: Install TTS dependencies manually first
-    - name: 📦 Pre-install TTS Dependencies
-      working-directory: Engine
-      shell: cmd
-      run: |
-        echo Installing TTS dependencies separately...
-        .\python.exe -m pip install "jieba" "pypinyin" "anyascii" "unidecode"
-        .\python.exe -m pip install "numba" "llvmlite" 
-        .\python.exe -m pip install "umap-learn" "pysbd"
-
-    # 10. TTS INSTALLATION - Using specific stable version
+    # 9. TTS INSTALLATION
     - name: 🗣️ Install TTS
       working-directory: Engine
       shell: cmd
       run: |
-        echo Installing TTS...
-        REM Try PyPI version first (more stable for Windows builds)
-        .\python.exe -m pip install TTS==0.22.0 --no-warn-script-location || (
-          echo PyPI failed, trying Git...
-          .\python.exe -m pip install git+https://github.com/coqui-ai/TTS.git@v0.22.0 --no-build-isolation --no-warn-script-location
-        )
+        echo Versuche TTS Installation...
+        REM Jetzt haben wir Python.h, jetzt sollte er bauen können!
+        .\python.exe -m pip install TTS==0.22.0 --no-build-isolation --no-warn-script-location
 
-    # 11. Additional Tools
-    - name: 📦 Install Additional Tools
+    # 10. Restliche Tools
+    - name: 📦 Tools Installieren
       working-directory: Engine
       shell: cmd
       run: |
-        echo Installing helper tools...
         .\python.exe -m pip install "opencv-python-headless<4.10" "opencv-python<4.10"
         .\python.exe -m pip install easyocr keyboard pyautogui pillow soundfile --no-warn-script-location
 
-    # 12. Quality Check
-    - name: 🔍 Test Imports
+    # 11. Tests
+    - name: 🔍 TEST
       working-directory: Engine
       shell: cmd
       run: |
         echo --- TEST KEYBOARD ---
-        .\python.exe -c "import keyboard; print('✓ Keyboard OK')" || exit 1
+        .\python.exe -c "import keyboard; print('Keyboard: OK')" || exit 1
         
         echo --- TEST TTS ---
-        .\python.exe -c "import TTS; print('✓ TTS OK'); print(TTS.__version__)" || exit 1
-        
-        echo --- TEST TORCH ---
-        .\python.exe -c "import torch; print('✓ Torch OK'); print(torch.__version__)" || exit 1
+        .\python.exe -c "import TTS; print('TTS: OK')" || exit 1
 
-    # 13. Cleanup & Zip
-    - name: 🧹 Cleanup and Package
+    # 12. Cleanup & Zip
+    - name: 🧹 Zippen
       working-directory: Engine
       shell: cmd
       run: |
         .\python.exe -m pip cache purge
+        
+        REM Wir können den 'include' Ordner wieder löschen, um Platz zu sparen, er wird nur zum Bauen gebraucht
+        rmdir /s /q include
+        rmdir /s /q libs
+        
         if exist "Lib\site-packages\torch\test" rmdir /s /q "Lib\site-packages\torch\test"
-        if exist "Lib\site-packages\TTS\tests" rmdir /s /q "Lib\site-packages\TTS\tests"
         
         cd ..
-        7z a -tzip -v1900m LQAG_Engine_V9.zip Engine
+        7z a -tzip -v1900m LQAG_Engine_V10.zip Engine
 
     - name: 🚀 Release Upload
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: Engine-V9-Fixed
-        name: "LQAG Engine V9 (Fixed Build)"
+        tag_name: Engine-V10-HeaderFix
+        name: "LQAG Engine V10 (Dev Headers Included)"
         body: |
-          ### Engine V9 - Fixed TTS Build
-          
-          **Changes:**
-          - Fixed TTS compilation issues
-          - Added missing build dependencies
-          - Using stable TTS 0.22.0
-          - Pre-installed all dependencies to avoid build conflicts
-          
-          **Components:**
-          - Python 3.10.11 (Portable)
-          - TTS 0.22.0 with Coqui XTTS
-          - PyTorch with CUDA 12.1
-          - All dependencies pre-compiled
+          ### Engine V10
+          Gezwungener Build mit implantierten Header-Dateien.
         draft: false
         prerelease: false
-        files: LQAG_Engine_V9.zip.*
+        files: LQAG_Engine_V10.zip.*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
