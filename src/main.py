@@ -1,75 +1,121 @@
-import sys
-import os
-import time
+import tkinter as tk
+from tkinter import ttk
 import threading
+import time
+import easyocr
+import numpy as np
+import pyautogui
+from audio_engine import AudioEngine
+from screen_tool import SnippingTool
 
-# --- GUI TEST (Tkinter) ---
-try:
-    import tkinter as tk
-    from tkinter import messagebox
-    TK_OK = True
-except ImportError as e:
-    TK_OK = False
-    TK_ERR = str(e)
-
-if not TK_OK:
-    print("CRITICAL: TKINTER FEHLT! Transplantation gescheitert.")
-    print(f"Fehler: {TK_ERR}")
-    input("Drücke Enter...")
-    sys.exit()
-
-# --- APP START ---
-class TestApp:
+class App:
     def __init__(self, root):
         self.root = root
-        self.root.title("LQAG Engine V3 - System Check")
-        self.root.geometry("600x400")
-        self.root.configure(bg="black")
+        self.root.title("LotRO Vorleser (AI Powered)")
+        self.root.geometry("500x400")
         
-        self.log_box = tk.Text(root, bg="#101010", fg="#00ff00", font=("Consolas", 10))
-        self.log_box.pack(fill="both", expand=True, padx=10, pady=10)
+        # Status Variablen
+        self.monitoring = False
+        self.scan_area = None # (x, y, w, h)
+        self.last_text = ""
         
-        self.log("System gestartet. Prüfe Module...")
+        # 1. UI Aufbauen
+        self.setup_ui()
         
-        # Test starten (verzögert, damit GUI erst lädt)
-        self.root.after(100, self.run_checks)
+        # 2. Engines im Hintergrund laden
+        self.log("⏳ Lade KI-Modelle (Das dauert kurz)...")
+        threading.Thread(target=self.load_engines, daemon=True).start()
+
+    def setup_ui(self):
+        # Bereich wählen Button
+        btn_frame = tk.Frame(self.root, pady=10)
+        btn_frame.pack()
+        
+        self.btn_area = tk.Button(btn_frame, text="1. Chat-Bereich auswählen", command=self.select_area, bg="#4a4a4a", fg="white")
+        self.btn_area.pack(side=tk.LEFT, padx=5)
+        
+        self.btn_start = tk.Button(btn_frame, text="2. Start", command=self.toggle_monitoring, state=tk.DISABLED, bg="green", fg="white")
+        self.btn_start.pack(side=tk.LEFT, padx=5)
+
+        # Log Fenster
+        self.log_box = tk.Text(self.root, height=15, bg="black", fg="#00ff00", font=("Consolas", 10))
+        self.log_box.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Status Leiste
+        self.lbl_status = tk.Label(self.root, text="Warte auf Initialisierung...", bd=1, relief=tk.SUNKEN, anchor=tk.W)
+        self.lbl_status.pack(side=tk.BOTTOM, fill=tk.X)
 
     def log(self, text):
         self.log_box.insert(tk.END, text + "\n")
         self.log_box.see(tk.END)
-        self.root.update()
 
-    def run_checks(self):
-        # 1. Keyboard
+    def load_engines(self):
         try:
-            import keyboard
-            self.log("[OK] Keyboard Modul geladen.")
-        except ImportError:
-            self.log("[FAIL] Keyboard fehlt!")
-
-        # 2. PyTorch
-        try:
-            self.log("Lade PyTorch (CPU/GPU)...")
-            import torch
-            v = torch.__version__
-            cuda = torch.cuda.is_available()
-            self.log(f"[OK] PyTorch {v} geladen.")
-            self.log(f"     -> GPU Verfügbar: {cuda}")
-        except ImportError:
-            self.log("[FAIL] PyTorch fehlt!")
-
-        # 3. TTS (Der Endgegner)
-        try:
-            self.log("Lade TTS (Das dauert kurz)...")
-            from TTS.api import TTS
-            self.log("[OK] TTS Engine erfolgreich importiert!")
-            self.log("-------------------------------------")
-            self.log("✅ SYSTEM BEREIT! WIR KÖNNEN LOSLEGEN.")
-            self.log("-------------------------------------")
+            # OCR Laden (Deutsch & Englisch)
+            self.log("... Lade Texterkennung (OCR) ...")
+            self.reader = easyocr.Reader(['de', 'en'], gpu=True)
+            self.log("✅ OCR geladen!")
+            
+            # Audio Laden
+            self.log("... Lade Sprach-KI (Coqui) ...")
+            self.audio = AudioEngine()
+            
+            self.lbl_status.config(text="System bereit. Bitte Bereich wählen.")
+            self.log("🚀 SYSTEM BEREIT!")
+            
         except Exception as e:
-            self.log(f"[FAIL] TTS Fehler: {e}")
+            self.log(f"❌ Fehler beim Laden: {e}")
 
-# Start
+    def select_area(self):
+        self.root.iconify() # Fenster minimieren
+        SnippingTool(self.root, self.on_area_selected)
+
+    def on_area_selected(self, x, y, w, h):
+        self.root.deiconify() # Fenster wiederherstellen
+        self.scan_area = (x, y, w, h)
+        self.log(f"Bereich definiert: {x}, {y} ({w}x{h})")
+        self.btn_start.config(state=tk.NORMAL)
+
+    def toggle_monitoring(self):
+        if not self.monitoring:
+            self.monitoring = True
+            self.btn_start.config(text="Stopp", bg="red")
+            threading.Thread(target=self.monitor_loop, daemon=True).start()
+        else:
+            self.monitoring = False
+            self.btn_start.config(text="Start", bg="green")
+
+    def monitor_loop(self):
+        self.log("👀 Überwachung gestartet...")
+        while self.monitoring:
+            try:
+                # 1. Screenshot machen
+                x, y, w, h = self.scan_area
+                screenshot = pyautogui.screenshot(region=(x, y, w, h))
+                image_np = np.array(screenshot)
+
+                # 2. Text lesen
+                results = self.reader.readtext(image_np, detail=0)
+                full_text = " ".join(results).strip()
+
+                # 3. Logik: Ist es neuer Text?
+                if full_text and full_text != self.last_text:
+                    # Filter: Ist der Text lang genug? (Rauschen vermeiden)
+                    if len(full_text) > 5: 
+                        self.log(f"Gelesen: {full_text}")
+                        
+                        # HIER SPRECHEN WIR!
+                        self.audio.speak(full_text)
+                        
+                        self.last_text = full_text
+
+                time.sleep(1.0) # Jede Sekunde prüfen
+
+            except Exception as e:
+                print(f"Loop Fehler: {e}")
+                time.sleep(1)
+
+# App Start
 root = tk.Tk()
-app = TestApp(root)
+app = App(root)
 root.mainloop()
