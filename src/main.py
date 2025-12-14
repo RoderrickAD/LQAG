@@ -6,11 +6,10 @@ import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-# Pfad-Fix (Muss ganz oben bleiben)
+# Pfad-Fix
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# --- PLATZHALTER FÜR SPÄTERE IMPORTS ---
-# Wir deklarieren diese Variablen hier, damit wir sie später global füllen können.
+# Platzhalter für Lazy Loading
 cv2 = None
 np = None
 easyocr = None
@@ -20,79 +19,86 @@ AudioEngine = None
 SnippingTool = None
 NpcManager = None
 
-# --- LOGGER KLASSE ---
-class Logger(object):
-    def __init__(self, filename="debug/system.log"):
-        self.terminal = sys.stdout
-        self.log = open(filename, "a", encoding="utf-8")
-
-    def write(self, message):
-        try:
-            self.terminal.write(message)
-            self.log.write(message)
-            self.log.flush()
-        except: pass
-
-    def flush(self):
-        try:
-            self.terminal.flush()
-            self.log.flush()
-        except: pass
-
-# --- HAUPT APP ---
 class App:
     def __init__(self):
-        # 1. Logger aktivieren (Geht schnell)
+        # 1. Pfade setzen
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.root_dir = os.path.dirname(self.base_dir)
         self.debug_dir = os.path.join(self.root_dir, "debug")
         self.cache_dir = os.path.join(self.root_dir, "resources", "cache")
+        self.log_file_path = os.path.join(self.debug_dir, "system.log")
         
+        # Ordner erstellen
         if not os.path.exists(self.debug_dir): os.makedirs(self.debug_dir)
         if not os.path.exists(self.cache_dir): os.makedirs(self.cache_dir)
         
-        # System Output umleiten
-        self.log_file_path = os.path.join(self.debug_dir, "system.log")
-        sys.stdout = Logger(self.log_file_path)
-        sys.stderr = sys.stdout
-        
-        print(f"=== SCHNELLER START: {datetime.datetime.now()} ===")
+        # Log-Header schreiben
+        with open(self.log_file_path, "a", encoding="utf-8") as f:
+            f.write(f"\n=== PROGRAMM START: {datetime.datetime.now()} ===\n")
 
-        # 2. SOFORT Splash Screen zeigen (bevor schwere Sachen laden)
+        # 2. GROSSER Splash Screen
         self.splash = tk.Tk()
         self.splash.overrideredirect(True)
         
-        w, h = 400, 150
-        ws = self.splash.winfo_screenwidth()
-        hs = self.splash.winfo_screenheight()
+        # Größer machen für bessere Lesbarkeit
+        w, h = 600, 300
+        try:
+            ws = self.splash.winfo_screenwidth()
+            hs = self.splash.winfo_screenheight()
+        except:
+            ws, hs = 1920, 1080 # Fallback
+            
         x = (ws/2) - (w/2)
         y = (hs/2) - (h/2)
+        
         self.splash.geometry('%dx%d+%d+%d' % (w, h, x, y))
         self.splash.configure(bg="#222")
         
-        lbl = tk.Label(self.splash, text="LQAG Vorleser", bg="#222", fg="#007acc", font=("Arial", 20, "bold"))
-        lbl.pack(pady=20)
+        # Große Schrift
+        lbl = tk.Label(self.splash, text="LQAG Vorleser", bg="#222", fg="#007acc", font=("Segoe UI", 32, "bold"))
+        lbl.pack(pady=40)
         
-        self.lbl_loading = tk.Label(self.splash, text="Starte GUI...", bg="#222", fg="white")
+        self.lbl_loading = tk.Label(self.splash, text="Lade System...", bg="#222", fg="white", font=("Segoe UI", 14))
         self.lbl_loading.pack()
         
-        self.progress_splash = ttk.Progressbar(self.splash, mode='indeterminate')
-        self.progress_splash.pack(fill=tk.X, padx=20, pady=20)
+        # Dickerer Ladebalken
+        style = ttk.Style()
+        style.theme_use('alt')
+        style.configure("green.Horizontal.TProgressbar", background='#007acc', thickness=20)
+        
+        self.progress_splash = ttk.Progressbar(self.splash, style="green.Horizontal.TProgressbar", mode='indeterminate', length=500)
+        self.progress_splash.pack(pady=40)
         self.progress_splash.start(15)
 
-        # 3. Jetzt erst den schweren Kram im Hintergrund laden
+        # Im Hintergrund laden
         threading.Thread(target=self.load_heavy_stuff, daemon=True).start()
         
         self.splash.mainloop()
 
-    def load_heavy_stuff(self):
-        """Hier passiert das 'Lazy Loading'. Wir importieren erst hier!"""
+    def log(self, text):
+        """Schreibt zuverlässig in Datei und GUI"""
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        msg = f"[{timestamp}] {text}"
+        
+        # 1. In Datei schreiben (Append Mode)
         try:
-            # Zugriff auf die globalen Variablen
+            with open(self.log_file_path, "a", encoding="utf-8") as f:
+                f.write(msg + "\n")
+        except: pass
+        
+        # 2. In GUI schreiben (wenn vorhanden)
+        if hasattr(self, 'log_box'):
+            self.log_box.insert(tk.END, f">> {text}\n")
+            self.log_box.see(tk.END)
+            
+        # 3. Konsole (für Debugging)
+        print(msg)
+
+    def load_heavy_stuff(self):
+        try:
             global cv2, np, easyocr, pyautogui, keyboard, AudioEngine, SnippingTool, NpcManager
             
-            # --- SCHRITT 1: IMPORTS (Das dauert die 10-20 Sekunden) ---
-            self.lbl_loading.config(text="Lade Bildverarbeitung (OpenCV)...")
+            self.lbl_loading.config(text="Lade Grafik-Bibliotheken...")
             import cv2
             import numpy as np
             import pyautogui
@@ -103,21 +109,20 @@ class App:
             from screen_tool import SnippingTool
             from npc_manager import NpcManager
             
-            self.lbl_loading.config(text="Lade KI-Stimme (Das dauert am längsten)...")
+            self.lbl_loading.config(text="Lade KI-Stimme (Geduld bitte)...")
             from audio_engine import AudioEngine
 
-            # --- SCHRITT 2: INITIALISIERUNG ---
-            self.lbl_loading.config(text="Starte Engines...")
-            
+            self.lbl_loading.config(text="Initialisiere Engines...")
             self.npc_manager = NpcManager()
             self.reader = easyocr.Reader(['de', 'en'], gpu=True)
             self.audio = AudioEngine()
             
-            # Wenn fertig -> Main UI starten
             self.splash.after(100, self.start_main_ui)
             
         except Exception as e:
-            print(f"CRASH BEIM LADEN: {e}")
+            # Fehler auch ins Log schreiben, da wir keine Konsole sehen
+            with open(self.log_file_path, "a") as f:
+                f.write(f"CRASH: {e}\n")
             self.splash.after(2000, self.splash.destroy)
 
     def start_main_ui(self):
@@ -128,13 +133,13 @@ class App:
         
         self.root = tk.Tk()
         self.root.title("LQAG - Vorleser")
-        self.root.geometry("600x600")
+        # Deutlich größeres Fenster
+        self.root.geometry("900x750")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1e1e1e")
         
         self.setup_ui()
         
-        # Hotkeys registrieren (jetzt wo keyboard geladen ist)
         keyboard.add_hotkey('f9', self.scan_once)
         keyboard.add_hotkey('f10', self.start_learning_sequence)
         
@@ -147,41 +152,53 @@ class App:
         self.root.mainloop()
 
     def setup_ui(self):
-        lbl_info = tk.Label(self.root, text="F10: Ecken lernen | F9: Vorlesen",
-                           bg="#1e1e1e", fg="#cccccc", font=("Arial", 10))
-        lbl_info.pack(pady=10)
+        # Größere Schriftarten definieren
+        font_header = ("Segoe UI", 14, "bold")
+        font_btn = ("Segoe UI", 12, "bold")
+        font_log = ("Consolas", 11)
+        font_status = ("Segoe UI", 12)
 
+        lbl_info = tk.Label(self.root, text="F10: Ecken lernen  |  F9: Vorlesen",
+                           bg="#1e1e1e", fg="#cccccc", font=font_header)
+        lbl_info.pack(pady=15)
+
+        # Buttons
         btn_frame = tk.Frame(self.root, bg="#1e1e1e")
-        btn_frame.pack(pady=5)
+        btn_frame.pack(pady=10)
+        
         self.btn_learn = tk.Button(btn_frame, text="1. Ecken lernen (F10)", 
-                                   command=self.start_learning_sequence, bg="#007acc", fg="white", width=20)
-        self.btn_learn.pack(side=tk.LEFT, padx=5)
+                                   command=self.start_learning_sequence, 
+                                   bg="#007acc", fg="white", font=font_btn, width=25, height=2)
+        self.btn_learn.pack(side=tk.LEFT, padx=10)
+        
         self.btn_read = tk.Button(btn_frame, text="2. VORLESEN (F9)", 
-                                  command=self.scan_once, state=tk.DISABLED, bg="#28a745", fg="white", width=20)
-        self.btn_read.pack(side=tk.LEFT, padx=5)
+                                  command=self.scan_once, state=tk.DISABLED, 
+                                  bg="#28a745", fg="white", font=font_btn, width=25, height=2)
+        self.btn_read.pack(side=tk.LEFT, padx=10)
 
+        # Audio Control
         ctrl_frame = tk.Frame(self.root, bg="#1e1e1e")
-        ctrl_frame.pack(pady=10)
-        self.btn_stop_audio = tk.Button(ctrl_frame, text="⏹ STOPP", 
-                                        command=self.stop_audio, bg="#dc3545", fg="white", font=("Arial", 9, "bold"))
+        ctrl_frame.pack(pady=15)
+        self.btn_stop_audio = tk.Button(ctrl_frame, text="⏹ AUDIO STOPP", 
+                                        command=self.stop_audio, 
+                                        bg="#dc3545", fg="white", font=font_btn, width=20)
         self.btn_stop_audio.pack(side=tk.LEFT, padx=5)
         
-        self.lbl_progress = tk.Label(self.root, text="", bg="#1e1e1e", fg="white", font=("Arial", 8))
+        # Fortschrittsbalken
+        self.lbl_progress = tk.Label(self.root, text="Bereit.", bg="#1e1e1e", fg="white", font=("Segoe UI", 10))
         self.lbl_progress.pack()
-        self.progress_read = ttk.Progressbar(self.root, orient="horizontal", length=500, mode="determinate")
-        self.progress_read.pack(pady=5)
-
-        self.log_box = tk.Text(self.root, height=15, bg="black", fg="#00ff00", font=("Consolas", 9), insertbackground="white")
-        self.log_box.pack(fill="both", expand=True, padx=5, pady=5)
         
-        self.lbl_target = tk.Label(self.root, text="Ziel: -", bg="#333", fg="yellow", bd=1, relief=tk.SUNKEN, anchor=tk.W)
-        self.lbl_target.pack(side=tk.BOTTOM, fill=tk.X)
+        self.progress_read = ttk.Progressbar(self.root, orient="horizontal", length=700, mode="determinate")
+        self.progress_read.pack(pady=10)
 
-    def log(self, text):
-        if hasattr(self, 'log_box'):
-            self.log_box.insert(tk.END, f">> {text}\n")
-            self.log_box.see(tk.END)
-        print(text)
+        # Log Box (Größer)
+        self.log_box = tk.Text(self.root, height=20, bg="black", fg="#00ff00", font=font_log, insertbackground="white")
+        self.log_box.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Status Leiste
+        self.lbl_target = tk.Label(self.root, text="Ziel: -", bg="#333", fg="yellow", 
+                                   font=font_status, bd=1, relief=tk.SUNKEN, anchor=tk.W, padx=10, pady=5)
+        self.lbl_target.pack(side=tk.BOTTOM, fill=tk.X)
 
     def update_progress(self, current, total):
         self.root.after(0, lambda: self._gui_update_progress(current, total))
@@ -194,7 +211,6 @@ class App:
             self.lbl_progress.config(text="Fertig.")
 
     def preprocess_image(self, img_np):
-        # Wir nutzen die globalen Module
         img = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
         img = cv2.resize(img, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -223,12 +239,17 @@ class App:
             screenshot = pyautogui.screenshot(region=(x, y, w, h))
             img_np = np.array(screenshot)
             
+            # --- DEBUG: RAW BILD SPEICHERN ---
+            raw_path = os.path.join(self.debug_dir, "last_scan_raw.png")
+            cv2.imwrite(raw_path, cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR))
+            
             processed_img = self.preprocess_image(img_np)
-            cv2.imwrite(os.path.join(self.debug_dir, "last_scan_processed.png"), processed_img)
+            proc_path = os.path.join(self.debug_dir, "last_scan_processed.png")
+            cv2.imwrite(proc_path, processed_img)
             
             results = self.reader.readtext(processed_img, detail=0, paragraph=True)
             
-            self.log("--- OCR ROHDATEN ---")
+            self.log("--- OCR ERGEBNIS ---")
             for line in results:
                 self.log(f"RAW: {line}")
             self.log("--------------------")
@@ -279,32 +300,41 @@ class App:
                     self.log(f"✅ Fenster gefunden!")
             except: pass
 
+    # --- LERN-PROZESS (Grauer Kasten Fix) ---
     def start_learning_sequence(self):
-        self.root.iconify()
-        # Wichtig: SnippingTool ist jetzt erst verfügbar
+        # Wir verstecken das Hauptfenster, damit es nicht im Weg ist
+        self.root.withdraw()
         SnippingTool(self.root, self._step1_finished)
 
     def _step1_finished(self, x, y, w, h):
-        time.sleep(0.3)
+        # FIX: Warten, damit Overlay verschwindet
+        time.sleep(0.5)
+        
         shot = pyautogui.screenshot(region=(x, y, w, h))
         self.template_tl = cv2.cvtColor(np.array(shot), cv2.COLOR_RGB2BGR)
-        self.root.deiconify()
+        
         messagebox.showinfo("Schritt 2", "Jetzt UNTEN-RECHTS markieren.")
-        self.root.iconify()
         SnippingTool(self.root, self._step2_finished)
 
     def _step2_finished(self, x, y, w, h):
-        self.root.deiconify()
-        time.sleep(0.3)
+        # FIX: Warten
+        time.sleep(0.5)
+        
         shot = pyautogui.screenshot(region=(x, y, w, h))
         self.template_br = cv2.cvtColor(np.array(shot), cv2.COLOR_RGB2BGR)
+        
+        # Fenster wieder zeigen
+        self.root.deiconify()
+        
         self.save_templates()
         found = self.scan_for_window()
         if found:
             self.current_area = found
             self.btn_read.config(state=tk.NORMAL)
             self.highlight_area(*found, "green")
-            self.log("🧠 Bereich gelernt.")
+            self.log("🧠 Bereich erfolgreich gelernt.")
+        else:
+            self.log("⚠️ Fehler: Ecken bilden kein gültiges Rechteck.")
 
     def scan_for_window(self):
         if self.template_tl is None or self.template_br is None: return None
