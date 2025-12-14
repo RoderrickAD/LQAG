@@ -283,4 +283,21 @@ class App:
             if val_tl < 0.8 or val_br < 0.8: return None
             h_br, w_br, _ = self.template_br.shape
             w = (loc_br[0] + w_br) - loc_tl[0]
-            h
+            h = (loc_br[1] + h_br) - loc_tl[1]
+            if w < 10 or h < 10: return None
+            return (loc_tl[0], loc_tl[1], w, h)
+        except: return None
+
+    def highlight_area(self, x, y, w, h, color="red"):
+        try:
+            top = tk.Toplevel(self.root)
+            top.geometry(f"{w}x{h}+{x}+{y}")
+            top.overrideredirect(True)
+            top.attributes("-topmost", True)
+            top.attributes("-alpha", 0.3)
+            top.configure(bg=color)
+            top.after(1000, top.destroy)
+        except: pass
+
+if __name__ == "__main__":
+    App()
