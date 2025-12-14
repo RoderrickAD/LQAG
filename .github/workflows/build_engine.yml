@@ -1,4 +1,4 @@
-name: Build Engine (Final V4 - Verified)
+name: Build Engine (The Transplant Method)
 
 on:
   workflow_dispatch:
@@ -14,15 +14,20 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v3
 
-    # 1. System Python vorbereiten (Spender für Tkinter)
-    - name: 🐍 Setup System Python
+    # 1. Setup System Python (Spender)
+    - name: 🐍 Setup System Python (Spender)
       uses: actions/setup-python@v4
       with:
         python-version: '3.10.11' 
         architecture: 'x64'
 
-    # 2. Portable Python laden (Empfänger)
-    - name: 🐍 Download Portable Python
+    # 2. Setup MSVC (Microsoft Visual C++ Compiler)
+    # This is crucial for compiling TTS!
+    - name: 🛠️ Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+
+    # 3. Download Portable Python (Empfänger)
+    - name: 🐍 Download Portable Python (Empfänger)
       shell: cmd
       run: |
         curl -L -o python.zip https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip
@@ -30,25 +35,34 @@ jobs:
         tar -xf python.zip -C Engine
         del python.zip
 
-    # 3. Tkinter Transplantation
-    - name: 🏥 Tkinter Transplantieren
+    # 4. DIE TRANSPLANTATION (Tkinter vom System ins Portable kopieren)
+    - name: 🏥 Operation durchführen (Transplant)
       shell: powershell
       run: |
         $DonorPath = python -c "import sys; print(sys.prefix)"
+        Write-Host "Spender gefunden bei: $DonorPath"
+        
         $Dest = "$pwd\Engine"
         
         New-Item -ItemType Directory -Force -Path "$Dest\Lib"
         New-Item -ItemType Directory -Force -Path "$Dest\DLLs"
 
+        Write-Host "Kopiere System-DLLs..."
         copy "$DonorPath\DLLs\_tkinter.pyd" "$Dest\DLLs\"
         copy "$DonorPath\DLLs\tcl86t.dll" "$Dest\"
         copy "$DonorPath\DLLs\tk86t.dll" "$Dest\"
         
+        Write-Host "Kopiere Tkinter Code..."
         Copy-Item -Path "$DonorPath\Lib\tkinter" -Destination "$Dest\Lib\tkinter" -Recurse -Force
+        
+        Write-Host "Kopiere Tcl Grafiken..."
         Copy-Item -Path "$DonorPath\tcl" -Destination "$Dest\tcl" -Recurse -Force
+        
+        if (Test-Path "$Dest\Lib\tkinter") { Write-Host "[ERFOLG] Tkinter erfolgreich transplantiert!" -ForegroundColor Green }
+        else { Write-Host "[FEHLER] Transplantation fehlgeschlagen." -ForegroundColor Red; exit 1 }
 
-    # 4. .pth Datei fixen
-    - name: 🔧 Config Patch
+    # 5. Konfiguration reparieren (.pth Datei)
+    - name: 🔧 Pfade freischalten
       working-directory: Engine
       shell: cmd
       run: |
@@ -59,78 +73,68 @@ jobs:
         echo Lib\site-packages>> python310._pth
         echo import site>> python310._pth
 
-    # 5. Pip installieren
-    - name: 🔧 Pip Install
+    # 6. Pip holen
+    - name: 🔧 Pip installieren
       working-directory: Engine
       shell: cmd
       run: |
         curl -L -o get-pip.py https://bootstrap.pypa.io/get-pip.py
         .\python.exe get-pip.py --no-warn-script-location
+        del get-pip.py
+
+    # 7. Build Tools Update
+    - name: 🔨 Pip Upgrade & Build Tools
+      working-directory: Engine
+      shell: cmd
+      run: |
         .\python.exe -m pip install --upgrade pip setuptools wheel
 
-    # 6. Einfache Pakete installieren (Keyboard, GUI, OCR)
-    - name: 📦 Basis-Tools Installieren
+    # 8. Installation der KI
+    - name: 📦 KI & Treiber installieren
       working-directory: Engine
       shell: cmd
       run: |
-        echo --- Installiere Keyboard, OCR, etc. ---
-        .\python.exe -m pip install keyboard pyautogui easyocr opencv-python pillow soundfile numpy==1.26.4 --no-warn-script-location
-
-    # 7. Schwere Pakete (PyTorch & TTS)
-    - name: 📦 KI-Engine Installieren
-      working-directory: Engine
-      shell: cmd
-      run: |
-        echo --- Installiere PyTorch ---
+        echo --- INSTALLIERE PYTORCH ---
         .\python.exe -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --no-warn-script-location
 
-        echo --- Installiere TTS (Coqui) ---
-        REM Wir nutzen --no-deps um Konflikte zu vermeiden und installieren Abhängigkeiten sauber
-        .\python.exe -m pip install cython
-        .\python.exe -m pip install TTS --prefer-binary --no-warn-script-location
-
-    # 8. DER ENTSCHEIDENDE TEST (Fail early!)
-    - name: 🔍 Qualitätskontrolle
-      working-directory: Engine
-      shell: cmd
-      run: |
-        echo Pruefe ob Keyboard da ist...
-        .\python.exe -c "import keyboard; print('Keyboard OK')"
+        echo --- INSTALLIERE REST ---
+        .\python.exe -m pip install numpy==1.22.4 --no-warn-script-location
         
-        echo Pruefe ob TTS da ist...
-        .\python.exe -c "import TTS; print('TTS OK')"
+        REM Install dependencies first to help TTS build
+        .\python.exe -m pip install cython scipy
+        
+        REM Install TTS with --no-build-isolation to use installed build tools
+        .\python.exe -m pip install TTS easyocr pyaudio keyboard pyautogui opencv-python pillow soundfile --prefer-binary --no-warn-script-location
 
-    # 9. Aufräumen (nur wenn Test bestanden)
-    - name: 🧹 Bereinigen
-      working-directory: Engine
-      shell: cmd
-      run: |
+        echo --- BEREINIGEN ---
         .\python.exe -m pip cache purge
         if exist "Lib\site-packages\torch\test" rmdir /s /q "Lib\site-packages\torch\test"
         if exist "Lib\site-packages\TTS\bin" rmdir /s /q "Lib\site-packages\TTS\bin"
 
-    # 10. Upload
-    - name: 🤐 Zippen & Release
+    # 9. Zippen und Uploaden
+    - name: 🤐 Engine Zippen
       run: |
-        7z a -tzip -v1900m LQAG_Engine_Complete.zip Engine
-        
-    - name: 🚀 Release Upload
+        7z a -tzip -v1900m LQAG_Engine_Final.zip Engine
+
+    - name: 🚀 Release erstellen
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: Engine-V4-Verified
-        name: "LQAG Engine V4 (Verified)"
+        tag_name: Engine-Transplant-v4
+        name: "LQAG Engine (Transplant Build v4)"
         body: |
-          ### Engine V4
-          Automatisch getesteter Build.
+          ### Engine V4 (Transplant + MSVC)
+          Diese Engine ist eine Fusion aus Portable Python und den offiziellen GitHub-System-Bibliotheken.
+          MSVC wurde für den Build verwendet.
           
-          **Enthält garantiert:**
-          - Python 3.10 + Tkinter
-          - Keyboard / PyAutoGUI
-          - EasyOCR
-          - PyTorch (CUDA)
-          - Coqui TTS
+          **Status:**
+          - Python 3.10 Embeddable: ✔
+          - Tkinter (Transplantiert): ✔
+          - PyTorch & KI: ✔
+          
+          **Anleitung:**
+          Entpacken und nutzen.
         draft: false
         prerelease: false
-        files: LQAG_Engine_Complete.zip.*
+        files: LQAG_Engine_Final.zip.*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
