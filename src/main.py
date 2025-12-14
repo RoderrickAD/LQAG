@@ -18,38 +18,25 @@ from audio_engine import AudioEngine
 from screen_tool import SnippingTool
 from npc_manager import NpcManager
 
-# --- LOGGER KLASSE ---
-class Logger(object):
-    def __init__(self, filename="debug/system.log"):
-        self.terminal = sys.stdout
-        self.log = open(filename, "a", encoding="utf-8")
-
-    def write(self, message):
-        try:
-            self.terminal.write(message)
-            self.log.write(message)
-            self.log.flush()
-        except: pass
-
-    def flush(self):
-        try:
-            self.terminal.flush()
-            self.log.flush()
-        except: pass
-
-# --- HAUPT APP ---
 class App:
     def __init__(self):
-        # 1. Logger aktivieren
-        if not os.path.exists("debug"): os.makedirs("debug")
-        sys.stdout = Logger()
-        sys.stderr = sys.stdout
-        print(f"=== NEUER START: {datetime.datetime.now()} ===")
+        # 1. Debug Ordner erstellen
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.root_dir = os.path.dirname(self.base_dir)
+        self.debug_dir = os.path.join(self.root_dir, "debug")
+        self.cache_dir = os.path.join(self.root_dir, "resources", "cache")
+        
+        if not os.path.exists(self.debug_dir): os.makedirs(self.debug_dir)
+        if not os.path.exists(self.cache_dir): os.makedirs(self.cache_dir)
 
-        # 2. Splash Screen erstellen
+        # Log-Datei leeren/neu anlegen
+        self.log_file_path = os.path.join(self.debug_dir, "system.log")
+        with open(self.log_file_path, "w", encoding="utf-8") as f:
+            f.write(f"=== LOG START: {datetime.datetime.now()} ===\n")
+
+        # 2. Splash Screen
         self.splash = tk.Tk()
         self.splash.overrideredirect(True)
-        
         w, h = 400, 150
         ws = self.splash.winfo_screenwidth()
         hs = self.splash.winfo_screenheight()
@@ -61,47 +48,53 @@ class App:
         lbl = tk.Label(self.splash, text="LQAG Vorleser", bg="#222", fg="#007acc", font=("Arial", 20, "bold"))
         lbl.pack(pady=20)
         
-        self.lbl_loading = tk.Label(self.splash, text="Lade KI-Modelle... (Das dauert kurz)", bg="#222", fg="white")
+        self.lbl_loading = tk.Label(self.splash, text="Lade KI-Modelle...", bg="#222", fg="white")
         self.lbl_loading.pack()
         
         self.progress_splash = ttk.Progressbar(self.splash, mode='indeterminate')
         self.progress_splash.pack(fill=tk.X, padx=20, pady=20)
-        self.progress_splash.start(15) # Langsamere Animation
+        self.progress_splash.start(15)
 
-        # 3. Engines im Hintergrund laden
         threading.Thread(target=self.load_engines, daemon=True).start()
-        
         self.splash.mainloop()
+
+    def log(self, text):
+        """Schreibt in GUI, Konsole UND Datei"""
+        # 1. GUI
+        if hasattr(self, 'log_box'):
+            self.log_box.insert(tk.END, f">> {text}\n")
+            self.log_box.see(tk.END)
+        
+        # 2. Datei (Sofort schreiben und speichern!)
+        try:
+            timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+            with open(self.log_file_path, "a", encoding="utf-8") as f:
+                f.write(f"[{timestamp}] {text}\n")
+        except: pass
+        
+        # 3. Konsole (nur wenn sichtbar)
+        print(text)
 
     def load_engines(self):
         try:
-            self.base_dir = os.path.dirname(os.path.abspath(__file__))
-            self.root_dir = os.path.dirname(self.base_dir)
-            self.cache_dir = os.path.join(self.root_dir, "resources", "cache")
-            self.debug_dir = os.path.join(self.root_dir, "debug")
-            if not os.path.exists(self.cache_dir): os.makedirs(self.cache_dir)
-
+            self.log("Initialisiere Manager...")
             self.npc_manager = NpcManager()
+            self.log("Initialisiere OCR...")
             self.reader = easyocr.Reader(['de', 'en'], gpu=True)
+            self.log("Initialisiere Audio...")
             self.audio = AudioEngine()
             
-            # WICHTIG: Aufruf über after(), damit es im GUI Thread läuft
             self.splash.after(100, self.start_main_ui)
             
         except Exception as e:
-            print(f"CRASH BEIM LADEN: {e}")
-            # Versuchen, sauber zu beenden
-            self.splash.after(0, self.splash.destroy)
+            self.log(f"CRASH BEIM LADEN: {e}")
+            self.splash.after(2000, self.splash.destroy)
 
     def start_main_ui(self):
-        """Baut das Hauptfenster auf"""
         try:
-            # FIX: Erst Animation stoppen!
             self.progress_splash.stop()
-            self.splash.update_idletasks() # Warten bis UI sich beruhigt hat
-            self.splash.destroy() # Jetzt sicher zerstören
-        except:
-            pass # Falls es schon weg ist, egal
+            self.splash.destroy()
+        except: pass
         
         self.root = tk.Tk()
         self.root.title("LQAG - Vorleser")
@@ -119,9 +112,7 @@ class App:
         self.current_area = None
         self.is_scanning = False
         
-        # Cache laden (verzögert, damit UI erst sichtbar wird)
         self.root.after(500, self.load_cached_templates)
-        
         self.root.mainloop()
 
     def setup_ui(self):
@@ -131,11 +122,9 @@ class App:
 
         btn_frame = tk.Frame(self.root, bg="#1e1e1e")
         btn_frame.pack(pady=5)
-        
         self.btn_learn = tk.Button(btn_frame, text="1. Ecken lernen (F10)", 
                                    command=self.start_learning_sequence, bg="#007acc", fg="white", width=20)
         self.btn_learn.pack(side=tk.LEFT, padx=5)
-        
         self.btn_read = tk.Button(btn_frame, text="2. VORLESEN (F9)", 
                                   command=self.scan_once, state=tk.DISABLED, bg="#28a745", fg="white", width=20)
         self.btn_read.pack(side=tk.LEFT, padx=5)
@@ -148,7 +137,6 @@ class App:
         
         self.lbl_progress = tk.Label(self.root, text="", bg="#1e1e1e", fg="white", font=("Arial", 8))
         self.lbl_progress.pack()
-        
         self.progress_read = ttk.Progressbar(self.root, orient="horizontal", length=500, mode="determinate")
         self.progress_read.pack(pady=5)
 
@@ -157,11 +145,6 @@ class App:
         
         self.lbl_target = tk.Label(self.root, text="Ziel: -", bg="#333", fg="yellow", bd=1, relief=tk.SUNKEN, anchor=tk.W)
         self.lbl_target.pack(side=tk.BOTTOM, fill=tk.X)
-
-    def log(self, text):
-        self.log_box.insert(tk.END, f">> {text}\n")
-        self.log_box.see(tk.END)
-        print(text)
 
     def update_progress(self, current, total):
         self.root.after(0, lambda: self._gui_update_progress(current, total))
@@ -174,26 +157,13 @@ class App:
             self.lbl_progress.config(text="Fertig.")
 
     def preprocess_image(self, img_np):
-        # 1. Konvertiere zu BGR (OpenCV Standard)
         img = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-        
-        # 2. Upscaling (3-fach vergrößern)
-        # Das hilft enorm bei kleinen Buchstaben wie 'i' oder Punkten
         img = cv2.resize(img, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-        
-        # 3. Graustufen
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-        # 4. CLAHE (Intelligente Kontrast-Anpassung)
-        # Statt hartem Schwarz-Weiß (Threshold) verstärken wir nur die Kanten.
-        # Das erhält die Form der Buchstaben besser.
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
         enhanced = clahe.apply(gray)
-        
-        # 5. Leichtes Schärfen (Optional, hilft oft bei verwaschener Schrift)
         kernel = np.array([[0, -1, 0], [-1, 5,-1], [0, -1, 0]])
         sharpened = cv2.filter2D(enhanced, -1, kernel)
-        
         return sharpened
 
     def scan_once(self):
@@ -209,40 +179,40 @@ class App:
             target = self.npc_manager.current_target
             voice_path = self.npc_manager.get_voice_path()
             v_name = os.path.basename(voice_path) if voice_path else "Standard"
-            
             self.root.after(0, lambda: self.lbl_target.config(text=f"Ziel: {target} | Stimme: {v_name}"))
 
             x, y, w, h = self.current_area
             screenshot = pyautogui.screenshot(region=(x, y, w, h))
             img_np = np.array(screenshot)
             
-            # Bild verbessern
             processed_img = self.preprocess_image(img_np)
             cv2.imwrite(os.path.join(self.debug_dir, "last_scan_processed.png"), processed_img)
             
-            # OCR LESEN
-            # paragraph=True hilft EasyOCR, Zeilenumbrüche im Spiel nicht als Satzende zu sehen!
+            # OCR Lesen
             results = self.reader.readtext(processed_img, detail=0, paragraph=True)
             
-            # --- DEBUG: DAS WOLLTEST DU SEHEN ---
-            print("\n--- RAW OCR ERGEBNIS ---")
+            # RAW LOGGING (Damit du siehst was OCR macht)
+            self.log("--- OCR ROHDATEN ---")
             for line in results:
-                print(f"Erkannt: '{line}'")
-            print("------------------------\n")
+                self.log(f"RAW: {line}")
+            self.log("--------------------")
             
             full_text = " ".join(results).strip()
 
             if full_text and len(full_text) > 3:
-                self.log(f"📖 {full_text[:60]}...")
+                self.log(f"📖 Text erkannt ({len(full_text)} Zeichen)")
                 if voice_path:
-                    self.audio.speak(full_text, voice_path, on_progress=self.update_progress)
+                    # Wir übergeben jetzt den debug_dir Pfad zum Speichern!
+                    self.audio.speak(full_text, voice_path, 
+                                   save_dir=self.debug_dir, 
+                                   on_progress=self.update_progress)
                 else:
-                    self.log("⚠️ Keine Stimme.")
+                    self.log("⚠️ Keine Stimme gefunden.")
             else:
                 self.log("... (Nichts erkannt)")
 
         except Exception as e:
-            self.log(f"Fehler: {e}")
+            self.log(f"Scan Fehler: {e}")
         finally:
             self.is_scanning = False
 
@@ -252,6 +222,7 @@ class App:
         self.lbl_progress.config(text="Abgebrochen.")
         self.log("🔇 Stopp.")
 
+    # --- SAVE / LOAD TEMPLATES ---
     def save_templates(self):
         if self.template_tl is not None and self.template_br is not None:
             cv2.imwrite(os.path.join(self.cache_dir, "last_tl.png"), self.template_tl)
@@ -297,6 +268,7 @@ class App:
             self.current_area = found
             self.btn_read.config(state=tk.NORMAL)
             self.highlight_area(*found, "green")
+            self.log("🧠 Bereich gelernt.")
 
     def scan_for_window(self):
         if self.template_tl is None or self.template_br is None: return None
