@@ -1,26 +1,48 @@
 import sys
 import os
-import cv2
-import numpy as np
 import datetime
 import threading
 import time
-
-# Pfad-Fix
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 import tkinter as tk
 from tkinter import messagebox, ttk
-import easyocr
-import pyautogui
-import keyboard
-from audio_engine import AudioEngine
-from screen_tool import SnippingTool
-from npc_manager import NpcManager
 
+# Pfad-Fix (Muss ganz oben bleiben)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# --- PLATZHALTER FÜR SPÄTERE IMPORTS ---
+# Wir deklarieren diese Variablen hier, damit wir sie später global füllen können.
+cv2 = None
+np = None
+easyocr = None
+pyautogui = None
+keyboard = None
+AudioEngine = None
+SnippingTool = None
+NpcManager = None
+
+# --- LOGGER KLASSE ---
+class Logger(object):
+    def __init__(self, filename="debug/system.log"):
+        self.terminal = sys.stdout
+        self.log = open(filename, "a", encoding="utf-8")
+
+    def write(self, message):
+        try:
+            self.terminal.write(message)
+            self.log.write(message)
+            self.log.flush()
+        except: pass
+
+    def flush(self):
+        try:
+            self.terminal.flush()
+            self.log.flush()
+        except: pass
+
+# --- HAUPT APP ---
 class App:
     def __init__(self):
-        # 1. Debug Ordner erstellen
+        # 1. Logger aktivieren (Geht schnell)
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.root_dir = os.path.dirname(self.base_dir)
         self.debug_dir = os.path.join(self.root_dir, "debug")
@@ -28,15 +50,18 @@ class App:
         
         if not os.path.exists(self.debug_dir): os.makedirs(self.debug_dir)
         if not os.path.exists(self.cache_dir): os.makedirs(self.cache_dir)
-
-        # Log-Datei leeren/neu anlegen
+        
+        # System Output umleiten
         self.log_file_path = os.path.join(self.debug_dir, "system.log")
-        with open(self.log_file_path, "w", encoding="utf-8") as f:
-            f.write(f"=== LOG START: {datetime.datetime.now()} ===\n")
+        sys.stdout = Logger(self.log_file_path)
+        sys.stderr = sys.stdout
+        
+        print(f"=== SCHNELLER START: {datetime.datetime.now()} ===")
 
-        # 2. Splash Screen
+        # 2. SOFORT Splash Screen zeigen (bevor schwere Sachen laden)
         self.splash = tk.Tk()
         self.splash.overrideredirect(True)
+        
         w, h = 400, 150
         ws = self.splash.winfo_screenwidth()
         hs = self.splash.winfo_screenheight()
@@ -48,46 +73,51 @@ class App:
         lbl = tk.Label(self.splash, text="LQAG Vorleser", bg="#222", fg="#007acc", font=("Arial", 20, "bold"))
         lbl.pack(pady=20)
         
-        self.lbl_loading = tk.Label(self.splash, text="Lade KI-Modelle...", bg="#222", fg="white")
+        self.lbl_loading = tk.Label(self.splash, text="Starte GUI...", bg="#222", fg="white")
         self.lbl_loading.pack()
         
         self.progress_splash = ttk.Progressbar(self.splash, mode='indeterminate')
         self.progress_splash.pack(fill=tk.X, padx=20, pady=20)
         self.progress_splash.start(15)
 
-        threading.Thread(target=self.load_engines, daemon=True).start()
+        # 3. Jetzt erst den schweren Kram im Hintergrund laden
+        threading.Thread(target=self.load_heavy_stuff, daemon=True).start()
+        
         self.splash.mainloop()
 
-    def log(self, text):
-        """Schreibt in GUI, Konsole UND Datei"""
-        # 1. GUI
-        if hasattr(self, 'log_box'):
-            self.log_box.insert(tk.END, f">> {text}\n")
-            self.log_box.see(tk.END)
-        
-        # 2. Datei (Sofort schreiben und speichern!)
+    def load_heavy_stuff(self):
+        """Hier passiert das 'Lazy Loading'. Wir importieren erst hier!"""
         try:
-            timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-            with open(self.log_file_path, "a", encoding="utf-8") as f:
-                f.write(f"[{timestamp}] {text}\n")
-        except: pass
-        
-        # 3. Konsole (nur wenn sichtbar)
-        print(text)
+            # Zugriff auf die globalen Variablen
+            global cv2, np, easyocr, pyautogui, keyboard, AudioEngine, SnippingTool, NpcManager
+            
+            # --- SCHRITT 1: IMPORTS (Das dauert die 10-20 Sekunden) ---
+            self.lbl_loading.config(text="Lade Bildverarbeitung (OpenCV)...")
+            import cv2
+            import numpy as np
+            import pyautogui
+            
+            self.lbl_loading.config(text="Lade OCR & Tools...")
+            import easyocr
+            import keyboard
+            from screen_tool import SnippingTool
+            from npc_manager import NpcManager
+            
+            self.lbl_loading.config(text="Lade KI-Stimme (Das dauert am längsten)...")
+            from audio_engine import AudioEngine
 
-    def load_engines(self):
-        try:
-            self.log("Initialisiere Manager...")
+            # --- SCHRITT 2: INITIALISIERUNG ---
+            self.lbl_loading.config(text="Starte Engines...")
+            
             self.npc_manager = NpcManager()
-            self.log("Initialisiere OCR...")
             self.reader = easyocr.Reader(['de', 'en'], gpu=True)
-            self.log("Initialisiere Audio...")
             self.audio = AudioEngine()
             
+            # Wenn fertig -> Main UI starten
             self.splash.after(100, self.start_main_ui)
             
         except Exception as e:
-            self.log(f"CRASH BEIM LADEN: {e}")
+            print(f"CRASH BEIM LADEN: {e}")
             self.splash.after(2000, self.splash.destroy)
 
     def start_main_ui(self):
@@ -104,6 +134,7 @@ class App:
         
         self.setup_ui()
         
+        # Hotkeys registrieren (jetzt wo keyboard geladen ist)
         keyboard.add_hotkey('f9', self.scan_once)
         keyboard.add_hotkey('f10', self.start_learning_sequence)
         
@@ -146,6 +177,12 @@ class App:
         self.lbl_target = tk.Label(self.root, text="Ziel: -", bg="#333", fg="yellow", bd=1, relief=tk.SUNKEN, anchor=tk.W)
         self.lbl_target.pack(side=tk.BOTTOM, fill=tk.X)
 
+    def log(self, text):
+        if hasattr(self, 'log_box'):
+            self.log_box.insert(tk.END, f">> {text}\n")
+            self.log_box.see(tk.END)
+        print(text)
+
     def update_progress(self, current, total):
         self.root.after(0, lambda: self._gui_update_progress(current, total))
         
@@ -157,6 +194,7 @@ class App:
             self.lbl_progress.config(text="Fertig.")
 
     def preprocess_image(self, img_np):
+        # Wir nutzen die globalen Module
         img = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
         img = cv2.resize(img, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -188,10 +226,8 @@ class App:
             processed_img = self.preprocess_image(img_np)
             cv2.imwrite(os.path.join(self.debug_dir, "last_scan_processed.png"), processed_img)
             
-            # OCR Lesen
             results = self.reader.readtext(processed_img, detail=0, paragraph=True)
             
-            # RAW LOGGING (Damit du siehst was OCR macht)
             self.log("--- OCR ROHDATEN ---")
             for line in results:
                 self.log(f"RAW: {line}")
@@ -202,7 +238,6 @@ class App:
             if full_text and len(full_text) > 3:
                 self.log(f"📖 Text erkannt ({len(full_text)} Zeichen)")
                 if voice_path:
-                    # Wir übergeben jetzt den debug_dir Pfad zum Speichern!
                     self.audio.speak(full_text, voice_path, 
                                    save_dir=self.debug_dir, 
                                    on_progress=self.update_progress)
@@ -246,6 +281,7 @@ class App:
 
     def start_learning_sequence(self):
         self.root.iconify()
+        # Wichtig: SnippingTool ist jetzt erst verfügbar
         SnippingTool(self.root, self._step1_finished)
 
     def _step1_finished(self, x, y, w, h):
