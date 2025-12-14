@@ -6,14 +6,13 @@ import threading
 import queue
 import re
 import time
-import numpy as np # Wichtig für Audio-Zusammenfügen
+import numpy as np
 from TTS.api import TTS
 import datetime
 
 class AudioEngine:
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        # Initialisierung
         self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
         
         self.audio_queue = queue.Queue()
@@ -21,6 +20,18 @@ class AudioEngine:
         self.stop_signal = False
         self.playback_thread = None
         self.progress_callback = None
+        
+        # NEU: Lautstärke (Standard 100%)
+        self.volume = 1.0 
+
+    def set_volume(self, val_0_to_100):
+        """Setzt Lautstärke basierend auf 0-100 Skala"""
+        try:
+            # Umrechnung 0-100 zu 0.0-1.0
+            self.volume = float(val_0_to_100) / 100.0
+            # Begrenzung zur Sicherheit
+            self.volume = max(0.0, min(1.0, self.volume))
+        except: pass
 
     def speak(self, text, speaker_wav, save_dir=None, on_progress=None):
         if not text: return
@@ -46,24 +57,20 @@ class AudioEngine:
 
     def _producer(self, text, speaker_wav, save_dir):
         try:
-            # Text reinigen
             clean_text = text.replace("\n", " ").replace("\r", "")
             clean_text = re.sub(' +', ' ', clean_text)
             
-            # Splitten
             sentences = re.split(r'(?<=[.!?])\s+', clean_text)
             sentences = [s.strip() for s in sentences if len(s.strip()) > 1]
             total = len(sentences)
             
             if self.progress_callback: self.progress_callback(0, total)
 
-            # Container für das komplette Audio
             full_audio_parts = [] 
 
             for i, sentence in enumerate(sentences):
                 if self.stop_signal: return
                 
-                # Chunking für lange Sätze
                 chunks = [sentence]
                 if len(sentence) > 230:
                     chunks = []
@@ -91,33 +98,18 @@ class AudioEngine:
                     )
                     
                     data, fs = sf.read(out_temp)
-                    
-                    # 1. Zur Wiedergabe senden
                     self.audio_queue.put((data, fs, i + 1, total))
-                    
-                    # 2. Für das Speichern sammeln
                     full_audio_parts.append(data)
             
-            # Ende Signal für Player
             self.audio_queue.put(None)
             
-            # --- ALLES SPEICHERN ---
             if save_dir and full_audio_parts and not self.stop_signal:
                 try:
-                    # Alle Teile zusammenkleben
                     full_audio = np.concatenate(full_audio_parts)
-                    
-                    # Dateinamen generieren
                     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                     filename = f"Recording_{ts}.wav"
-                    filepath = os.path.join(save_dir, filename)
-                    
-                    # Speichern (Samplerate ist meistens 24000 bei XTTS)
-                    sf.write(filepath, full_audio, 24000)
-                    print(f"💾 Audio gespeichert: {filepath}") # Landet im Log
-                    
-                except Exception as e:
-                    print(f"Fehler beim Speichern: {e}")
+                    sf.write(os.path.join(save_dir, filename), full_audio, 24000)
+                except: pass
 
         except Exception as e:
             print(f"Generator Fehler: {e}")
@@ -135,7 +127,11 @@ class AudioEngine:
                 data, fs, cur, tot = item
                 if self.stop_signal: break
 
-                sd.play(data, samplerate=24000)
+                # --- VOLUME APPLY ---
+                # Wir multiplizieren das Numpy Array mit dem Faktor
+                adjusted_data = data * self.volume
+
+                sd.play(adjusted_data, samplerate=24000)
                 sd.wait()
                 
                 if self.progress_callback:
