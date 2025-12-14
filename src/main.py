@@ -174,11 +174,27 @@ class App:
             self.lbl_progress.config(text="Fertig.")
 
     def preprocess_image(self, img_np):
+        # 1. Konvertiere zu BGR (OpenCV Standard)
         img = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-        img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+        
+        # 2. Upscaling (3-fach vergrößern)
+        # Das hilft enorm bei kleinen Buchstaben wie 'i' oder Punkten
+        img = cv2.resize(img, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        
+        # 3. Graustufen
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        return binary
+        
+        # 4. CLAHE (Intelligente Kontrast-Anpassung)
+        # Statt hartem Schwarz-Weiß (Threshold) verstärken wir nur die Kanten.
+        # Das erhält die Form der Buchstaben besser.
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+        enhanced = clahe.apply(gray)
+        
+        # 5. Leichtes Schärfen (Optional, hilft oft bei verwaschener Schrift)
+        kernel = np.array([[0, -1, 0], [-1, 5,-1], [0, -1, 0]])
+        sharpened = cv2.filter2D(enhanced, -1, kernel)
+        
+        return sharpened
 
     def scan_once(self):
         if self.is_scanning or not self.current_area: return
@@ -193,20 +209,31 @@ class App:
             target = self.npc_manager.current_target
             voice_path = self.npc_manager.get_voice_path()
             v_name = os.path.basename(voice_path) if voice_path else "Standard"
+            
             self.root.after(0, lambda: self.lbl_target.config(text=f"Ziel: {target} | Stimme: {v_name}"))
 
             x, y, w, h = self.current_area
             screenshot = pyautogui.screenshot(region=(x, y, w, h))
             img_np = np.array(screenshot)
             
+            # Bild verbessern
             processed_img = self.preprocess_image(img_np)
             cv2.imwrite(os.path.join(self.debug_dir, "last_scan_processed.png"), processed_img)
             
-            results = self.reader.readtext(processed_img, detail=0)
+            # OCR LESEN
+            # paragraph=True hilft EasyOCR, Zeilenumbrüche im Spiel nicht als Satzende zu sehen!
+            results = self.reader.readtext(processed_img, detail=0, paragraph=True)
+            
+            # --- DEBUG: DAS WOLLTEST DU SEHEN ---
+            print("\n--- RAW OCR ERGEBNIS ---")
+            for line in results:
+                print(f"Erkannt: '{line}'")
+            print("------------------------\n")
+            
             full_text = " ".join(results).strip()
 
             if full_text and len(full_text) > 3:
-                self.log(f"📖 {full_text[:50]}...")
+                self.log(f"📖 {full_text[:60]}...")
                 if voice_path:
                     self.audio.speak(full_text, voice_path, on_progress=self.update_progress)
                 else:
