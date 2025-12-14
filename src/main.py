@@ -1,3 +1,9 @@
+import sys
+import os
+
+# FIX: Add the src directory to Python's path so it can find audio_engine and screen_tool
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import tkinter as tk
 from tkinter import ttk
 import threading
@@ -116,6 +122,7 @@ class App:
                 time.sleep(1)
 
 # App Start
-root = tk.Tk()
-app = App(root)
-root.mainloop()
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = App(root)
+    root.mainloop()
