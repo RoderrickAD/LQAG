@@ -1,170 +1,87 @@
-import os
-import glob
 import json
+import os
 import random
-import time
+import re
 
 class NpcManager:
     def __init__(self):
-        self.npc_db = {}
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.root_dir = os.path.dirname(self.base_dir)
+        self.assignments_path = os.path.join(self.root_dir, "resources", "voices-assignments.json")
+        self.generated_dir = os.path.join(self.root_dir, "resources", "voices", "generated")
+        self.npc_list_path = os.path.join(self.root_dir, "resources", "npc_lists.txt")
+        self.target_path = os.path.join(self.root_dir, "resources", "npc_lists", "target.txt")
+        
         self.current_target = "Unbekannt"
-        self.gender = "m" 
-        
-        # --- PFAD-KONFIGURATION ---
-        self.src_dir = os.path.dirname(os.path.abspath(__file__))
-        self.root_dir = os.path.dirname(self.src_dir)
-        self.resources_dir = os.path.join(self.root_dir, "resources")
-        self.cache_dir = os.path.join(self.resources_dir, "cache")
-        
-        # Sicherstellen, dass der Cache Ordner existiert
-        if not os.path.exists(self.cache_dir):
-            os.makedirs(self.cache_dir)
-            
-        self.list_path = os.path.join(self.resources_dir, "npc_lists.txt")
-        self.voices_dir = os.path.join(self.resources_dir, "voices")
-        self.memory_file = os.path.join(self.cache_dir, "voice_assignments.json")
-        
-        # --- STIMMEN LADEN ---
-        self.male_voices = self._load_voice_files("generic_male")
-        self.female_voices = self._load_voice_files("generic_female")
-        
-        # --- DATENBANKEN LADEN ---
-        self.load_npc_list()     # Männlich/Weiblich Liste
-        self.voice_memory = self.load_voice_memory() # Wer hat welche Stimme?
-        
-        # --- LOG DATEI SUCHEN ---
-        self.log_file = self.find_lotro_log()
+        self.npc_database = self.load_npc_database()
+        self.assignments = self.load_assignments()
 
-    def _load_voice_files(self, subfolder):
-        """Lädt alle .wav Dateien und gibt nur den Dateinamen zurück (relative Pfade sind sicherer)"""
-        path = os.path.join(self.voices_dir, subfolder)
-        files = glob.glob(os.path.join(path, "*.wav"))
-        return sorted(files)
-
-    def load_npc_list(self):
-        if not os.path.exists(self.list_path):
-            print(f"⚠️ Datei fehlt: {self.list_path}")
-            return
-        try:
-            with open(self.list_path, "r", encoding="utf-8", errors="ignore") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line: continue
-                    if "[m]" in line:
-                        self.npc_db[line.replace("[m]", "").strip()] = "male"
-                    elif "[w]" in line or "[f]" in line:
-                        self.npc_db[line.replace("[w]", "").replace("[f]", "").strip()] = "female"
-            print(f"✅ NPC-Datenbank: {len(self.npc_db)} Einträge.")
-        except Exception as e:
-            print(f"❌ Fehler NPC Liste: {e}")
-
-    # --- DAS NEUE GEDÄCHTNIS ---
-    def load_voice_memory(self):
-        """Lädt die gespeicherten Zuordnungen (Wer hat welche Stimme?)"""
-        if os.path.exists(self.memory_file):
+    def load_npc_database(self):
+        """Lädt die Liste mit Namen[m/f] Zuordnungen"""
+        db = {}
+        if os.path.exists(self.npc_list_path):
             try:
-                with open(self.memory_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                print(f"🧠 Stimm-Gedächtnis geladen ({len(data)} NPCs erinnern sich).")
-                return data
+                with open(self.npc_list_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        # Extrahiert Name und Geschlecht, z.B. "Aerona[f]" -> "Aerona", "f"
+                        match = re.search(r"^(.*)\[([mf])\]", line.strip())
+                        if match:
+                            name, gender = match.groups()
+                            db[name.strip()] = gender
             except Exception as e:
-                print(f"⚠️ Fehler beim Laden des Gedächtnisses: {e}")
-                return {}
+                print(f"Fehler beim Laden der NPC-Liste: {e}")
+        return db
+
+    def load_assignments(self):
+        if os.path.exists(self.assignments_path):
+            try:
+                with open(self.assignments_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except: return {}
         return {}
 
-    def save_voice_memory(self):
-        """Speichert neue Zuordnungen"""
+    def save_assignments(self):
         try:
-            with open(self.memory_file, "w", encoding="utf-8") as f:
-                json.dump(self.voice_memory, f, indent=4, ensure_ascii=False)
-        except Exception as e:
-            print(f"❌ Konnte Gedächtnis nicht speichern: {e}")
-
-    def find_lotro_log(self):
-        user_docs = os.path.expanduser("~/Documents/The Lord of the Rings Online")
-        if not os.path.exists(user_docs):
-            user_docs = os.path.expanduser("~/Dokumente/The Lord of the Rings Online")
-        
-        log_path = os.path.join(user_docs, "Script.log")
-        if os.path.exists(log_path):
-            print(f"🔌 Log verbunden: {log_path}")
-            return log_path
-        return None
+            with open(self.assignments_path, "w", encoding="utf-8") as f:
+                json.dump(self.assignments, f, indent=4, ensure_ascii=False)
+        except: pass
 
     def update(self):
-        if not self.log_file or not os.path.exists(self.log_file):
-            if not self.log_file: self.log_file = self.find_lotro_log()
-            return
-
-        try:
-            with open(self.log_file, "r", encoding="utf-8", errors="ignore") as f:
-                # Schnell ans Ende springen
-                f.seek(0, 2) 
-                fsize = f.tell()
-                f.seek(max(fsize - 1024, 0), 0) 
-                lines = f.readlines()
-                
-            if lines:
-                last_line = lines[-1].strip()
-                # Fehlermeldungen ignorieren
-                if "Main.lua" in last_line or "attempt to index" in last_line or not last_line:
-                    return
-
-                if last_line != self.current_target:
-                    self.current_target = last_line
-                    self.determine_gender(self.current_target)
-                    
-                    # Stimmen-Zuweisung prüfen/erstellen
-                    self.assign_voice_if_needed(self.current_target)
-                    
-                    # Info
-                    v_path = self.get_voice_path()
-                    v_name = os.path.basename(v_path) if v_path else "KEINE"
-                    print(f"🎯 Ziel: '{self.current_target}' ({self.gender}) -> {v_name}")
-        except Exception:
-            pass 
-
-    def determine_gender(self, name):
-        self.gender = self.npc_db.get(name, "male")
-
-    def assign_voice_if_needed(self, name):
-        """Prüft, ob der NPC schon eine Stimme hat. Wenn nicht, würfeln & speichern."""
-        
-        # 1. SPECIFIC CHECK (Hat er eine Datei mit seinem Namen?)
-        specific_path = os.path.join(self.voices_dir, "specific", f"{name}.wav")
-        if os.path.exists(specific_path):
-            return # Er hat eine Spezialstimme, wir müssen nichts speichern.
-
-        # 2. MEMORY CHECK (Haben wir ihm schon mal eine gegeben?)
-        if name in self.voice_memory:
-            # Prüfen ob die Datei noch existiert
-            saved_file = self.voice_memory[name]
-            if os.path.exists(saved_file):
-                return # Alles gut, er erinnert sich.
-
-        # 3. NEU ZUWEISEN (Zufällig wählen)
-        pool = self.female_voices if self.gender == "female" else self.male_voices
-        if not pool: return
-
-        # Zufällige Stimme aus dem Pool wählen
-        chosen_voice = random.choice(pool)
-        
-        # Speichern
-        self.voice_memory[name] = chosen_voice
-        self.save_voice_memory()
-        # print(f"🎲 Neue Stimme für {name} gewürfelt: {os.path.basename(chosen_voice)}")
+        if os.path.exists(self.target_path):
+            try:
+                with open(self.target_path, "r", encoding="utf-8") as f:
+                    self.current_target = f.read().strip() or "Unbekannt"
+            except: pass
 
     def get_voice_path(self):
         name = self.current_target
+        if name in self.assignments:
+            path = self.assignments[name]
+            if os.path.exists(path): return path
+        return self.auto_assign_new_voice(name)
+
+    def auto_assign_new_voice(self, npc_name):
+        if not os.path.exists(self.generated_dir): return ""
+        all_files = [os.path.join(self.generated_dir, f) for f in os.listdir(self.generated_dir) if f.endswith(".wav")]
+        if not all_files: return ""
+
+        # Geschlecht aus Datenbank abrufen 
+        gender = self.npc_database.get(npc_name, "m") # Standard "m", falls unbekannt
         
-        # A. Spezifisch (Vorrang!)
-        specific_path = os.path.join(self.voices_dir, "specific", f"{name}.wav")
-        if os.path.exists(specific_path):
-            return specific_path
-            
-        # B. Aus dem Gedächtnis
-        if name in self.voice_memory:
-            return self.voice_memory[name]
-            
-        # C. Fallback (Sollte eigentlich durch assign_voice_if_needed abgefangen sein)
-        return None
+        males = [f for f in all_files if "male_" in os.path.basename(f).lower()]
+        females = [f for f in all_files if "female_" in os.path.basename(f).lower()]
+
+        if gender == "f" and females:
+            chosen = random.choice(females)
+        elif males:
+            chosen = random.choice(males)
+        else:
+            chosen = random.choice(all_files)
+
+        self.assignments[npc_name] = chosen
+        self.save_assignments()
+        return chosen
+
+    def assign_voice(self, npc_name, voice_path):
+        self.assignments[npc_name] = voice_path
+        self.save_assignments()
