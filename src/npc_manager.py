@@ -10,7 +10,9 @@ class NpcManager:
         self.assignments_path = os.path.join(self.root_dir, "resources", "voices-assignments.json")
         self.generated_dir = os.path.join(self.root_dir, "resources", "voices", "generated")
         self.npc_list_path = os.path.join(self.root_dir, "resources", "npc_lists.txt")
-        self.target_path = os.path.join(self.root_dir, "resources", "npc_lists", "target.txt")
+        
+        # Standard-Pfad (Fallback, falls nichts in Settings steht)
+        self.default_target_path = os.path.join(self.root_dir, "resources", "npc_lists", "target.txt")
         
         self.current_target = "Unbekannt"
         self.npc_database = self.load_npc_database()
@@ -43,11 +45,16 @@ class NpcManager:
                 json.dump(self.assignments, f, indent=4, ensure_ascii=False)
         except: pass
 
-    def update(self):
-        if os.path.exists(self.target_path):
+    def update(self, custom_path=""):
+        """Liest den Namen aus dem angegebenen Pfad oder dem Fallback"""
+        file_to_read = custom_path if (custom_path and os.path.exists(custom_path)) else self.default_target_path
+        
+        if os.path.exists(file_to_read):
             try:
-                with open(self.target_path, "r", encoding="utf-8") as f:
-                    self.current_target = f.read().strip() or "Unbekannt"
+                with open(file_to_read, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                    if content:
+                        self.current_target = content
             except: pass
 
     def get_voice_path(self):
