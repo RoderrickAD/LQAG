@@ -9,7 +9,9 @@ class SettingsManager:
             "hotkey_learn": "f10",
             "hotkey_stop": "f8",
             "hotkey_pause": "f7",
-            "debug_mode": True # Standardmäßig an, User kann es ausschalten
+            "debug_mode": True,
+            "use_elevenlabs": False,        # NEU: Schalter für ElevenLabs
+            "elevenlabs_api_key": ""        # NEU: Dein API Key
         }
         self.settings = self.load_settings()
 
