@@ -10,8 +10,8 @@ class SettingsManager:
             "hotkey_stop": "f8",
             "hotkey_pause": "f7",
             "debug_mode": True,
-            "use_elevenlabs": False,        # NEU: Schalter für ElevenLabs
-            "elevenlabs_api_key": ""        # NEU: Dein API Key
+            "use_elevenlabs": False,
+            "elevenlabs_api_key": ""
         }
         self.settings = self.load_settings()
 
@@ -19,25 +19,25 @@ class SettingsManager:
         if not os.path.exists(self.filepath):
             return self.defaults.copy()
         try:
-            with open(self.filepath, "r") as f:
+            with open(self.filepath, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                # Fehlende Keys auffüllen
                 for k, v in self.defaults.items():
-                    if k not in data:
-                        data[k] = v
+                    if k not in data: data[k] = v
                 return data
-        except:
-            return self.defaults.copy()
+        except: return self.defaults.copy()
 
     def save_settings(self):
         try:
-            with open(self.filepath, "w") as f:
+            os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
+            with open(self.filepath, "w", encoding="utf-8") as f:
                 json.dump(self.settings, f, indent=4)
-        except Exception as e:
-            print(f"Fehler beim Speichern: {e}")
+        except: pass
 
     def get(self, key):
         return self.settings.get(key, self.defaults.get(key))
+
+    def get_all(self):
+        return self.settings
 
     def set(self, key, value):
         self.settings[key] = value
