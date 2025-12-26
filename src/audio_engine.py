@@ -37,7 +37,6 @@ class AudioEngine:
                 f.write(f"[{ts}] {msg}\n")
         except: pass
 
-    # --- MAP VERWALTUNG ---
     def load_voice_map(self):
         if os.path.exists(self.voice_map_path):
             try:
@@ -50,22 +49,46 @@ class AudioEngine:
             with open(self.voice_map_path, "w") as f: json.dump(data, f, indent=4)
         except: pass
 
-    # --- GENERATOR (JETZT WIEDER MIT LANGEM TEXT) ---
-    def get_available_voices(self, api_key):
-        try:
-            res = requests.get("https://api.elevenlabs.io/v1/voices", headers={"xi-api-key": api_key}, timeout=20)
-            return res.json().get("voices", []) if res.status_code == 200 else []
-        except: return []
+    # --- SMARTE REQUEST FUNKTION (KEY ROTATION) ---
+    def _make_elevenlabs_request(self, method, url, json_data, settings, timeout=20):
+        """Probiert alle Keys nacheinander durch, wenn einer failt (401/429)"""
+        keys = settings.get("elevenlabs_api_keys", [])
+        if not keys: return None
+        
+        for key in keys:
+            headers = {"xi-api-key": key, "Content-Type": "application/json"}
+            try:
+                if method == "GET":
+                    res = requests.get(url, headers=headers, timeout=timeout)
+                else:
+                    res = requests.post(url, json=json_data, headers=headers, timeout=timeout)
+                
+                # Wenn erfolgreich: Fertig!
+                if res.status_code == 200:
+                    return res
+                
+                # Wenn Quota leer (401 Unauthorized oder 429 Too Many Requests)
+                if res.status_code in [401, 402, 429]:
+                    self.log_to_file(f"Key {key[:5]}... leer/fehlerhaft ({res.status_code}). Versuche nächsten...")
+                    continue # Nächster Key in der Schleife
+                
+                # Bei anderen Fehlern (500 etc) abbrechen
+                return res
+            except: 
+                continue # Bei Netzwerkfehler nächsten Key probieren
+        
+        return None # Alle Keys gescheitert
 
+    # --- GENERATOR ---
     def generate_voice_library(self, settings, progress_callback=None):
-        api_key = settings.get("elevenlabs_api_key")
-        if not api_key: return False
-        all_voices = self.get_available_voices(api_key)
+        # Nutzt jetzt die Smart Request Funktion für GET
+        res = self._make_elevenlabs_request("GET", "https://api.elevenlabs.io/v1/voices", None, settings)
+        all_voices = res.json().get("voices", []) if res and res.status_code == 200 else []
+        
         if not all_voices: return False
 
         males = [v for v in all_voices if v.get("labels", {}).get("gender") == "male"]
         females = [v for v in all_voices if v.get("labels", {}).get("gender") == "female"]
-        
         targets = []
         if males or females:
             for v in random.sample(males, min(len(males), 4)): targets.append((f"male_{v['name']}", v['voice_id']))
@@ -73,7 +96,6 @@ class AudioEngine:
         else:
             for v in all_voices[:6]: targets.append((f"neutral_{v['name']}", v['voice_id']))
 
-        # HIER IST WIEDER DER LANGE TEXT!
         ideal_text = (
             "Seid gegrüßt, Reisender! Ich habe schon viele Monde lang auf jemanden wie Euch gewartet. "
             "Könnt Ihr das Flüstern des Windes in den alten Ruinen hören? Seid wachsam, denn die Schatten "
@@ -83,7 +105,6 @@ class AudioEngine:
         
         save_path = os.path.join(self.root_dir, "resources", "voices", "generated")
         os.makedirs(save_path, exist_ok=True)
-        
         voice_map = self.load_voice_map()
         count = 0
         
@@ -91,24 +112,17 @@ class AudioEngine:
             if self.stop_signal: break
             safe_name = "".join(x for x in name if x.isalnum() or x in "_-")
             filename = f"{safe_name}.wav"
-            
             if progress_callback: progress_callback(i + 1, len(targets), f"Lade (Lang): {safe_name}")
             
-            try:
-                # Timeout auf 120 Sekunden erhöht für den langen Text
-                res = requests.post(f"https://api.elevenlabs.io/v1/text-to-speech/{v_id}", 
-                                    json={"text": ideal_text, "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}, 
-                                    headers={"xi-api-key": api_key, "Content-Type": "application/json"}, timeout=120)
-                
-                if res.status_code == 200:
-                    with open(os.path.join(save_path, filename), "wb") as f: f.write(res.content)
-                    voice_map[filename] = v_id
-                    count += 1
-                else:
-                    self.log_to_file(f"Fehler {res.status_code} bei {name}")
-            except Exception as e:
-                self.log_to_file(f"Timeout/Fehler bei {name}: {e}")
-            time.sleep(2.0)
+            # Nutzt jetzt die Smart Request Funktion für POST
+            data = {"text": ideal_text, "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}
+            res = self._make_elevenlabs_request("POST", f"https://api.elevenlabs.io/v1/text-to-speech/{v_id}", data, settings, timeout=120)
+            
+            if res and res.status_code == 200:
+                with open(os.path.join(save_path, filename), "wb") as f: f.write(res.content)
+                voice_map[filename] = v_id
+                count += 1
+            time.sleep(1.0)
             
         self.save_voice_map(voice_map)
         return count > 0
@@ -116,7 +130,7 @@ class AudioEngine:
     # --- HYBRID ENGINE ---
     def load_local_tts(self):
         if self.tts is None:
-            self.log_to_file("Lade lokales XTTS Modell (Fallback)...")
+            self.log_to_file("Lade lokales XTTS Modell...")
             self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
 
     def set_volume(self, val):
@@ -134,18 +148,16 @@ class AudioEngine:
         self.is_playing = True
         
         debug_mode = settings.get("debug_mode", False)
-        use_el = settings.get("use_elevenlabs") and settings.get("elevenlabs_api_key")
+        # Check ob Cloud aktiviert ist UND Keys vorhanden sind
+        use_el = settings.get("use_elevenlabs") and settings.get("elevenlabs_api_keys")
         
         voice_id = None
         voice_map = self.load_voice_map()
-        
-        # ID finden
         if speaker_ref and os.path.basename(speaker_ref) in voice_map:
             voice_id = voice_map[os.path.basename(speaker_ref)]
         elif speaker_ref and not os.path.exists(speaker_ref) and len(speaker_ref) > 10:
             voice_id = speaker_ref
 
-        # Hybrid Logik
         if use_el and voice_id:
             threading.Thread(target=self._producer_hybrid, args=(text, voice_id, speaker_ref, settings, on_progress, debug_mode), daemon=True).start()
         else:
@@ -156,23 +168,24 @@ class AudioEngine:
 
     def _producer_hybrid(self, text, voice_id, local_path, settings, on_progress, debug_mode):
         sentences = self._split(text)
-        api_key = settings.get("elevenlabs_api_key")
-        
         for i, s in enumerate(sentences):
             if self.stop_signal: break
             success = False
             
-            # 1. Cloud
-            try:
-                url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
-                res = requests.post(url, json={"text": s, "model_id": "eleven_multilingual_v2"}, headers={"xi-api-key": api_key}, timeout=20)
-                if res.status_code == 200:
-                    with open("temp_el.mp3", "wb") as f: f.write(res.content)
-                    data, fs = sf.read("temp_el.mp3")
-                    self.audio_queue.put((data, fs, i+1, len(sentences), s))
-                    success = True
-            except: pass
-
+            # 1. Cloud Versuch (mit Key Rotation)
+            data = {"text": s, "model_id": "eleven_multilingual_v2"}
+            url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
+            
+            # Streaming ist schwer mit Rotation, wir nutzen hier normalen Request für Sicherheit
+            # (oder man baut Rotation für Stream, aber das ist komplexer. Hier "einfach" full download pro Satz)
+            res = self._make_elevenlabs_request("POST", url, data, settings, timeout=20)
+            
+            if res and res.status_code == 200:
+                with open("temp_el.mp3", "wb") as f: f.write(res.content)
+                data_audio, fs = sf.read("temp_el.mp3")
+                self.audio_queue.put((data_audio, fs, i+1, len(sentences), s))
+                success = True
+            
             # 2. Local Fallback
             if not success:
                 if local_path and os.path.exists(local_path):
@@ -196,8 +209,7 @@ class AudioEngine:
             data, fs = sf.read(out)
             self.audio_queue.put((data, 24000, index + 1, total, text))
             if debug_mode:
-                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                sf.write(os.path.join(self.debug_dir, f"Debug_Local_{ts}.wav"), data, 24000)
+                 pass 
         except: pass
 
     def _split(self, text):
