@@ -11,7 +11,8 @@ class SettingsManager:
             "hotkey_pause": "f7",
             "debug_mode": True,
             "use_elevenlabs": False,
-            "elevenlabs_api_key": ""
+            "elevenlabs_api_key": "",
+            "plugin_target_path": ""  # NEU: Pfad zur target.txt
         }
         self.settings = self.load_settings()
 
@@ -21,6 +22,7 @@ class SettingsManager:
         try:
             with open(self.filepath, "r", encoding="utf-8") as f:
                 data = json.load(f)
+                # Fehlende Keys ergänzen
                 for k, v in self.defaults.items():
                     if k not in data: data[k] = v
                 return data
