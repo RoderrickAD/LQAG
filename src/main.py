@@ -4,7 +4,7 @@ import datetime
 import threading
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk, filedialog # filedialog hinzugefügt
+from tkinter import messagebox, ttk, filedialog
 import ctypes
 import numpy as np
 import cv2
@@ -41,7 +41,7 @@ class App:
         self.SnippingTool = SnippingTool
         
         self.root = tk.Tk()
-        self.root.title("LQAG Vorleser V25")
+        self.root.title("LQAG Vorleser V26 (Multi-Account)")
         self.root.geometry("1000x900")
         self.root.configure(bg=COLORS["bg"])
         
@@ -86,7 +86,6 @@ class App:
     def setup_tab_settings(self):
         c = tk.Frame(self.tab2, bg=COLORS["bg"]); c.pack(fill=tk.BOTH, expand=True, padx=50, pady=30)
         
-        # --- PLUGINS DATEI WAHL ---
         tk.Label(c, text="Plugin Datei (target.txt):", bg=COLORS["bg"], fg="white", font=FONT_NORM).pack(anchor="w", pady=(0, 5))
         f_plug = tk.Frame(c, bg=COLORS["bg"]); f_plug.pack(fill=tk.X, pady=(0, 20))
         self.ent_plug = tk.Entry(f_plug, bg=COLORS["text_bg"], fg="#aaa", relief="flat"); 
@@ -106,9 +105,15 @@ class App:
         tk.Checkbutton(c, text="ElevenLabs nutzen", variable=self.chk_el, command=lambda: self.settings_mgr.set("use_elevenlabs", self.chk_el.get()), bg=COLORS["bg"], fg="#ccc", selectcolor=COLORS["bg"]).pack(anchor="w")
         
         api_f = tk.Frame(c, bg=COLORS["bg"]); api_f.pack(fill=tk.X, pady=10)
-        tk.Label(api_f, text="API Key:", bg=COLORS["bg"], fg="#888").pack(side=tk.LEFT)
-        self.ent_api = tk.Entry(api_f, bg=COLORS["text_bg"], fg="white", relief="flat"); self.ent_api.insert(0, self.settings_mgr.get("elevenlabs_api_key")); self.ent_api.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        tk.Button(api_f, text="Save", command=lambda: self.settings_mgr.set("elevenlabs_api_key", self.ent_api.get()), bg=COLORS["accent"], fg="white").pack(side=tk.LEFT)
+        tk.Label(api_f, text="API Keys (Komma getrennt):", bg=COLORS["bg"], fg="#888").pack(anchor="w")
+        self.ent_api = tk.Entry(api_f, bg=COLORS["text_bg"], fg="white", relief="flat")
+        
+        # Keys laden und als String anzeigen
+        keys = self.settings_mgr.get("elevenlabs_api_keys")
+        if keys: self.ent_api.insert(0, ", ".join(keys))
+        
+        self.ent_api.pack(fill=tk.X, expand=True, pady=(5,0))
+        tk.Button(api_f, text="Keys Speichern", command=self.save_api_keys, bg=COLORS["accent"], fg="white").pack(anchor="e", pady=5)
         
         tk.Button(c, text="🚀 Bibliothek dynamisch aufbauen", command=self.start_library_generation, bg=COLORS["success"], fg="white", pady=10).pack(fill=tk.X, pady=20)
         
@@ -118,6 +123,13 @@ class App:
         vol_f = tk.Frame(c, bg=COLORS["bg"]); vol_f.pack(fill=tk.X, pady=10)
         tk.Label(vol_f, text="Vol:", bg=COLORS["bg"], fg="#ccc").pack(side=tk.LEFT)
         s = tk.Scale(vol_f, from_=0, to=100, orient=tk.HORIZONTAL, bg=COLORS["bg"], fg="white", command=self.audio.set_volume); s.set(100); s.pack(side=tk.LEFT, padx=10)
+
+    def save_api_keys(self):
+        raw = self.ent_api.get()
+        # String in Liste umwandeln, Leerzeichen entfernen
+        keys = [k.strip() for k in raw.split(',') if k.strip()]
+        self.settings_mgr.set("elevenlabs_api_keys", keys)
+        messagebox.showinfo("Gespeichert", f"{len(keys)} API Keys gespeichert!")
 
     def choose_plugin_file(self):
         file_path = filedialog.askopenfilename(filetypes=[("Text Dateien", "*.txt"), ("Alle Dateien", "*.*")])
@@ -162,11 +174,8 @@ class App:
     def _run_scan(self):
         db = self.settings_mgr.get("debug_mode")
         plug_path = self.settings_mgr.get("plugin_target_path")
-        
         try:
-            # HIER WIRD JETZT DER PFAD ÜBERGEBEN
             self.npc_manager.update(plug_path)
-            
             target = self.npc_manager.current_target; v_ref = self.npc_manager.get_voice_path()
             self.root.after(0, lambda: self.lbl_target.config(text=target))
             self.root.after(0, self.root.withdraw); time.sleep(0.3); area = self.scan_for_window(); self.root.after(0, self.root.deiconify)
