@@ -1,0 +1,9 @@
+requests
+sounddevice
+soundfile
+numpy
+opencv-python
+pyautogui
+keyboard
+easyocr
+TTS
