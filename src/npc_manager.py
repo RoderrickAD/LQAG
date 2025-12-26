@@ -11,7 +11,7 @@ class NpcManager:
         self.generated_dir = os.path.join(self.root_dir, "resources", "voices", "generated")
         self.npc_list_path = os.path.join(self.root_dir, "resources", "npc_lists.txt")
         
-        # Standard-Pfad (Fallback, falls nichts in Settings steht)
+        # Standard-Pfad
         self.default_target_path = os.path.join(self.root_dir, "resources", "npc_lists", "target.txt")
         
         self.current_target = "Unbekannt"
@@ -46,16 +46,25 @@ class NpcManager:
         except: pass
 
     def update(self, custom_path=""):
-        """Liest den Namen aus dem angegebenen Pfad oder dem Fallback"""
+        """Liest die Datei und nimmt NUR die letzte Zeile"""
         file_to_read = custom_path if (custom_path and os.path.exists(custom_path)) else self.default_target_path
         
         if os.path.exists(file_to_read):
             try:
-                with open(file_to_read, "r", encoding="utf-8") as f:
+                # 'errors="ignore"' verhindert Abstürze bei seltsamen Zeichen im Log
+                with open(file_to_read, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read().strip()
                     if content:
-                        self.current_target = content
-            except: pass
+                        # Zerlege den Text in eine Liste von Zeilen
+                        lines = content.splitlines()
+                        # Nimm nur den allerletzten Eintrag
+                        last_entry = lines[-1].strip()
+                        
+                        # Nur übernehmen, wenn der Eintrag nicht leer ist
+                        if last_entry:
+                            self.current_target = last_entry
+            except Exception as e:
+                print(f"Fehler beim Lesen der NPC-Datei: {e}")
 
     def get_voice_path(self):
         name = self.current_target
