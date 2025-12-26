@@ -17,19 +17,16 @@ class NpcManager:
         self.assignments = self.load_assignments()
 
     def load_npc_database(self):
-        """Lädt die Liste mit Namen[m/f] Zuordnungen"""
         db = {}
         if os.path.exists(self.npc_list_path):
             try:
                 with open(self.npc_list_path, "r", encoding="utf-8") as f:
                     for line in f:
-                        # Extrahiert Name und Geschlecht, z.B. "Aerona[f]" -> "Aerona", "f"
                         match = re.search(r"^(.*)\[([mf])\]", line.strip())
                         if match:
                             name, gender = match.groups()
                             db[name.strip()] = gender
-            except Exception as e:
-                print(f"Fehler beim Laden der NPC-Liste: {e}")
+            except: pass
         return db
 
     def load_assignments(self):
@@ -65,23 +62,14 @@ class NpcManager:
         all_files = [os.path.join(self.generated_dir, f) for f in os.listdir(self.generated_dir) if f.endswith(".wav")]
         if not all_files: return ""
 
-        # Geschlecht aus Datenbank abrufen 
-        gender = self.npc_database.get(npc_name, "m") # Standard "m", falls unbekannt
-        
+        gender = self.npc_database.get(npc_name, "m")
         males = [f for f in all_files if "male_" in os.path.basename(f).lower()]
         females = [f for f in all_files if "female_" in os.path.basename(f).lower()]
 
-        if gender == "f" and females:
-            chosen = random.choice(females)
-        elif males:
-            chosen = random.choice(males)
-        else:
-            chosen = random.choice(all_files)
+        if gender == "f" and females: chosen = random.choice(females)
+        elif males: chosen = random.choice(males)
+        else: chosen = random.choice(all_files)
 
         self.assignments[npc_name] = chosen
         self.save_assignments()
         return chosen
-
-    def assign_voice(self, npc_name, voice_path):
-        self.assignments[npc_name] = voice_path
-        self.save_assignments()
