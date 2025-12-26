@@ -4,7 +4,7 @@ import datetime
 import threading
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, ttk, filedialog # filedialog hinzugefügt
 import ctypes
 import numpy as np
 import cv2
@@ -41,7 +41,7 @@ class App:
         self.SnippingTool = SnippingTool
         
         self.root = tk.Tk()
-        self.root.title("LQAG Vorleser V24")
+        self.root.title("LQAG Vorleser V25")
         self.root.geometry("1000x900")
         self.root.configure(bg=COLORS["bg"])
         
@@ -85,22 +85,46 @@ class App:
 
     def setup_tab_settings(self):
         c = tk.Frame(self.tab2, bg=COLORS["bg"]); c.pack(fill=tk.BOTH, expand=True, padx=50, pady=30)
+        
+        # --- PLUGINS DATEI WAHL ---
+        tk.Label(c, text="Plugin Datei (target.txt):", bg=COLORS["bg"], fg="white", font=FONT_NORM).pack(anchor="w", pady=(0, 5))
+        f_plug = tk.Frame(c, bg=COLORS["bg"]); f_plug.pack(fill=tk.X, pady=(0, 20))
+        self.ent_plug = tk.Entry(f_plug, bg=COLORS["text_bg"], fg="#aaa", relief="flat"); 
+        self.ent_plug.insert(0, self.settings_mgr.get("plugin_target_path")); self.ent_plug.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Button(f_plug, text="Durchsuchen...", command=self.choose_plugin_file, bg=COLORS["panel"], fg="white").pack(side=tk.LEFT, padx=5)
+        
+        tk.Frame(c, bg=COLORS["border"], height=1).pack(fill=tk.X, pady=10)
+
         self.create_binder(c, "Vorlesen:", "hotkey_read")
         self.create_binder(c, "Lernen:", "hotkey_learn")
         self.create_binder(c, "Stoppen:", "hotkey_stop")
         self.create_binder(c, "Pause:", "hotkey_pause")
+        
         tk.Frame(c, bg=COLORS["border"], height=1).pack(fill=tk.X, pady=25)
+        
         self.chk_el = tk.BooleanVar(value=self.settings_mgr.get("use_elevenlabs"))
         tk.Checkbutton(c, text="ElevenLabs nutzen", variable=self.chk_el, command=lambda: self.settings_mgr.set("use_elevenlabs", self.chk_el.get()), bg=COLORS["bg"], fg="#ccc", selectcolor=COLORS["bg"]).pack(anchor="w")
+        
         api_f = tk.Frame(c, bg=COLORS["bg"]); api_f.pack(fill=tk.X, pady=10)
-        self.ent_api = tk.Entry(api_f, bg=COLORS["text_bg"], fg="white", relief="flat"); self.ent_api.insert(0, self.settings_mgr.get("elevenlabs_api_key")); self.ent_api.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        tk.Button(api_f, text="Save", command=lambda: self.settings_mgr.set("elevenlabs_api_key", self.ent_api.get()), bg=COLORS["accent"], fg="white").pack(side=tk.LEFT, padx=5)
+        tk.Label(api_f, text="API Key:", bg=COLORS["bg"], fg="#888").pack(side=tk.LEFT)
+        self.ent_api = tk.Entry(api_f, bg=COLORS["text_bg"], fg="white", relief="flat"); self.ent_api.insert(0, self.settings_mgr.get("elevenlabs_api_key")); self.ent_api.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        tk.Button(api_f, text="Save", command=lambda: self.settings_mgr.set("elevenlabs_api_key", self.ent_api.get()), bg=COLORS["accent"], fg="white").pack(side=tk.LEFT)
+        
         tk.Button(c, text="🚀 Bibliothek dynamisch aufbauen", command=self.start_library_generation, bg=COLORS["success"], fg="white", pady=10).pack(fill=tk.X, pady=20)
+        
         self.chk_db = tk.BooleanVar(value=self.settings_mgr.get("debug_mode"))
         tk.Checkbutton(c, text="Debug-Modus (Bilder/Text speichern)", variable=self.chk_db, command=lambda: self.settings_mgr.set("debug_mode", self.chk_db.get()), bg=COLORS["bg"], fg="#ccc", selectcolor=COLORS["bg"]).pack(anchor="w")
+        
         vol_f = tk.Frame(c, bg=COLORS["bg"]); vol_f.pack(fill=tk.X, pady=10)
         tk.Label(vol_f, text="Vol:", bg=COLORS["bg"], fg="#ccc").pack(side=tk.LEFT)
         s = tk.Scale(vol_f, from_=0, to=100, orient=tk.HORIZONTAL, bg=COLORS["bg"], fg="white", command=self.audio.set_volume); s.set(100); s.pack(side=tk.LEFT, padx=10)
+
+    def choose_plugin_file(self):
+        file_path = filedialog.askopenfilename(filetypes=[("Text Dateien", "*.txt"), ("Alle Dateien", "*.*")])
+        if file_path:
+            self.settings_mgr.set("plugin_target_path", file_path)
+            self.ent_plug.delete(0, tk.END)
+            self.ent_plug.insert(0, file_path)
 
     def create_binder(self, parent, label, key):
         f = tk.Frame(parent, bg=COLORS["bg"]); f.pack(fill=tk.X, pady=3)
@@ -134,10 +158,16 @@ class App:
     def scan_once(self):
         if self.is_scanning or self.template_tl is None: return
         self.is_scanning = True; threading.Thread(target=self._run_scan, daemon=True).start()
+        
     def _run_scan(self):
         db = self.settings_mgr.get("debug_mode")
+        plug_path = self.settings_mgr.get("plugin_target_path")
+        
         try:
-            self.npc_manager.update(); target = self.npc_manager.current_target; v_ref = self.npc_manager.get_voice_path()
+            # HIER WIRD JETZT DER PFAD ÜBERGEBEN
+            self.npc_manager.update(plug_path)
+            
+            target = self.npc_manager.current_target; v_ref = self.npc_manager.get_voice_path()
             self.root.after(0, lambda: self.lbl_target.config(text=target))
             self.root.after(0, self.root.withdraw); time.sleep(0.3); area = self.scan_for_window(); self.root.after(0, self.root.deiconify)
             if not area: self.is_scanning = False; return
