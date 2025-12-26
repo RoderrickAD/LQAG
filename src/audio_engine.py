@@ -50,7 +50,7 @@ class AudioEngine:
             with open(self.voice_map_path, "w") as f: json.dump(data, f, indent=4)
         except: pass
 
-    # --- GENERATOR MIT MAP-SUPPORT ---
+    # --- GENERATOR (JETZT WIEDER MIT LANGEM TEXT) ---
     def get_available_voices(self, api_key):
         try:
             res = requests.get("https://api.elevenlabs.io/v1/voices", headers={"xi-api-key": api_key}, timeout=20)
@@ -73,11 +73,17 @@ class AudioEngine:
         else:
             for v in all_voices[:6]: targets.append((f"neutral_{v['name']}", v['voice_id']))
 
-        ideal_text = "Seid gegrüßt! Die Schatten werden länger, doch wir werden das Licht zurückbringen. Seid Ihr bereit?"
+        # HIER IST WIEDER DER LANGE TEXT!
+        ideal_text = (
+            "Seid gegrüßt, Reisender! Ich habe schon viele Monde lang auf jemanden wie Euch gewartet. "
+            "Könnt Ihr das Flüstern des Windes in den alten Ruinen hören? Seid wachsam, denn die Schatten "
+            "in Mittelerde werden von Tag zu Tag länger. Aber verzagt nicht! Gemeinsam werden wir einen "
+            "Weg finden, um das Licht zurückzubringen. Sagt mir, seid Ihr bereit für dieses Abenteuer?"
+        )
+        
         save_path = os.path.join(self.root_dir, "resources", "voices", "generated")
         os.makedirs(save_path, exist_ok=True)
         
-        # Map laden oder neu erstellen
         voice_map = self.load_voice_map()
         count = 0
         
@@ -86,24 +92,25 @@ class AudioEngine:
             safe_name = "".join(x for x in name if x.isalnum() or x in "_-")
             filename = f"{safe_name}.wav"
             
-            if progress_callback: progress_callback(i + 1, len(targets), f"Lade: {safe_name}")
+            if progress_callback: progress_callback(i + 1, len(targets), f"Lade (Lang): {safe_name}")
             
             try:
+                # Timeout auf 120 Sekunden erhöht für den langen Text
                 res = requests.post(f"https://api.elevenlabs.io/v1/text-to-speech/{v_id}", 
                                     json={"text": ideal_text, "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}, 
                                     headers={"xi-api-key": api_key, "Content-Type": "application/json"}, timeout=120)
                 
                 if res.status_code == 200:
                     with open(os.path.join(save_path, filename), "wb") as f: f.write(res.content)
-                    voice_map[filename] = v_id # ID speichern!
+                    voice_map[filename] = v_id
                     count += 1
                 else:
                     self.log_to_file(f"Fehler {res.status_code} bei {name}")
             except Exception as e:
                 self.log_to_file(f"Timeout/Fehler bei {name}: {e}")
-            time.sleep(1.5)
+            time.sleep(2.0)
             
-        self.save_voice_map(voice_map) # Map speichern
+        self.save_voice_map(voice_map)
         return count > 0
 
     # --- HYBRID ENGINE ---
@@ -129,23 +136,19 @@ class AudioEngine:
         debug_mode = settings.get("debug_mode", False)
         use_el = settings.get("use_elevenlabs") and settings.get("elevenlabs_api_key")
         
-        # ID ermitteln
         voice_id = None
         voice_map = self.load_voice_map()
         
-        # Fall 1: speaker_ref ist ein Pfad (z.B. generated/male_Josh.wav)
+        # ID finden
         if speaker_ref and os.path.basename(speaker_ref) in voice_map:
             voice_id = voice_map[os.path.basename(speaker_ref)]
-        # Fall 2: speaker_ref ist bereits eine ID (manuell eingetragen)
         elif speaker_ref and not os.path.exists(speaker_ref) and len(speaker_ref) > 10:
             voice_id = speaker_ref
 
-        # Strategie wählen
+        # Hybrid Logik
         if use_el and voice_id:
-            # Cloud First mit Fallback
             threading.Thread(target=self._producer_hybrid, args=(text, voice_id, speaker_ref, settings, on_progress, debug_mode), daemon=True).start()
         else:
-            # Nur Lokal
             self.load_local_tts()
             threading.Thread(target=self._producer_local, args=(text, speaker_ref, settings, on_progress, debug_mode), daemon=True).start()
             
@@ -159,29 +162,22 @@ class AudioEngine:
             if self.stop_signal: break
             success = False
             
-            # 1. VERSUCH: CLOUD
+            # 1. Cloud
             try:
-                # self.log_to_file(f"Versuche Cloud für Satz {i+1}...") 
                 url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
-                res = requests.post(url, json={"text": s, "model_id": "eleven_multilingual_v2"}, headers={"xi-api-key": api_key}, timeout=10)
-                
+                res = requests.post(url, json={"text": s, "model_id": "eleven_multilingual_v2"}, headers={"xi-api-key": api_key}, timeout=20)
                 if res.status_code == 200:
                     with open("temp_el.mp3", "wb") as f: f.write(res.content)
                     data, fs = sf.read("temp_el.mp3")
                     self.audio_queue.put((data, fs, i+1, len(sentences), s))
                     success = True
-                else:
-                    self.log_to_file(f"Cloud Fehler {res.status_code}. Wechsle zu Lokal.")
-            except Exception as e:
-                self.log_to_file(f"Cloud Exception: {e}. Wechsle zu Lokal.")
+            except: pass
 
-            # 2. FALLBACK: LOKAL (wenn Cloud fehlschlug)
+            # 2. Local Fallback
             if not success:
                 if local_path and os.path.exists(local_path):
                     self.load_local_tts()
                     self._generate_local_chunk(s, local_path, i, len(sentences), debug_mode)
-                else:
-                    self.log_to_file("Kritisch: Cloud fehlgeschlagen und keine lokale Datei vorhanden.")
         
         self.audio_queue.put(None)
 
@@ -193,7 +189,6 @@ class AudioEngine:
         self.audio_queue.put(None)
 
     def _generate_local_chunk(self, text, speaker_wav, index, total, debug_mode):
-        """Hilfsfunktion für lokale Generierung"""
         if not text.strip(): return
         try:
             out = "temp_gen.wav"
@@ -201,10 +196,9 @@ class AudioEngine:
             data, fs = sf.read(out)
             self.audio_queue.put((data, 24000, index + 1, total, text))
             if debug_mode:
-                 # Optional: hier speichern wenn nötig
-                 pass
-        except Exception as e:
-            self.log_to_file(f"Local TTS Fail: {e}")
+                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                sf.write(os.path.join(self.debug_dir, f"Debug_Local_{ts}.wav"), data, 24000)
+        except: pass
 
     def _split(self, text):
         t = text.replace("\n", " ")
