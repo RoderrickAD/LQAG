@@ -269,6 +269,29 @@ class App:
                              activebackground=COLORS["bg"], activeforeground="white", font=FONT_NORM)
         chk.pack(anchor="w")
 
+    tk.Frame(container, bg=COLORS["border"], height=1).pack(fill=tk.X, pady=30)
+        tk.Label(container, text="Cloud Sprachausgabe (ElevenLabs)", bg=COLORS["bg"], fg="white", font=("Segoe UI", 16, "bold")).pack(anchor="w", pady=(0, 20))
+        
+        # ElevenLabs Toggle
+        self.chk_el_var = tk.BooleanVar(value=self.settings_mgr.get("use_elevenlabs"))
+        tk.Checkbutton(container, text="ElevenLabs nutzen (Internet benötigt)", variable=self.chk_el_var,
+                       command=lambda: self.settings_mgr.set("use_elevenlabs", self.chk_el_var.get()),
+                       bg=COLORS["bg"], fg="#ccc", selectcolor=COLORS["bg"]).pack(anchor="w")
+        
+        # API Key Entry
+        tk.Label(container, text="API Key:", bg=COLORS["bg"], fg="#888").pack(anchor="w", pady=(10,0))
+        self.ent_api_key = tk.Entry(container, bg=COLORS["text_bg"], fg="white", relief="flat", width=50)
+        self.ent_api_key.insert(0, self.settings_mgr.get("elevenlabs_api_key"))
+        self.ent_api_key.pack(anchor="w", pady=5)
+        
+        # Save Button für API Key
+        tk.Button(container, text="Key speichern", command=self.save_api_key, bg=COLORS["accent"], fg="white").pack(anchor="w")
+
+    def save_api_key(self):
+        key = self.ent_api_key.get()
+        self.settings_mgr.set("elevenlabs_api_key", key)
+        self.log_user("API Key gespeichert.")
+
     def create_binder(self, label_text, key_name):
         f = tk.Frame(self.binder_frame, bg=COLORS["bg"])
         f.pack(fill=tk.X, pady=5)
