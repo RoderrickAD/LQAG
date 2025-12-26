@@ -11,6 +11,7 @@ import numpy as np
 from TTS.api import TTS
 import datetime
 import random
+import traceback
 
 class AudioEngine:
     def __init__(self):
@@ -33,22 +34,41 @@ class AudioEngine:
         except: pass
 
     def get_available_voices(self, api_key):
+        """Fragt Stimmen mit Timeout ab"""
         url = "https://api.elevenlabs.io/v1/voices"
         headers = {"xi-api-key": api_key}
         try:
-            response = requests.get(url, headers=headers)
-            return response.json().get("voices", []) if response.status_code == 200 else []
-        except: return []
+            self.log_to_file("Rufe Stimmenliste von ElevenLabs ab...")
+            # Timeout von 10 Sekunden hinzugefügt
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                voices = response.json().get("voices", [])
+                self.log_to_file(f"{len(voices)} Stimmen gefunden.")
+                return voices
+            else:
+                self.log_to_file(f"API Fehler: {response.status_code} - {response.text}")
+                return []
+        except Exception as e:
+            self.log_to_file(f"Netzwerkfehler bei Stimmenabfrage: {e}")
+            return []
 
     def generate_voice_library(self, settings, progress_callback=None):
         api_key = settings.get("elevenlabs_api_key")
-        if not api_key: return False
+        if not api_key: 
+            self.log_to_file("Abbruch: Kein API Key konfiguriert.")
+            return False
 
         all_voices = self.get_available_voices(api_key)
+        if not all_voices:
+            self.log_to_file("Abbruch: Keine Stimmen verfügbar.")
+            return False
+
+        # Filtern nach Geschlecht
         males = [v for v in all_voices if v.get("labels", {}).get("gender") == "male"]
         females = [v for v in all_voices if v.get("labels", {}).get("gender") == "female"]
+        
+        self.log_to_file(f"Filter: {len(males)} männlich, {len(females)} weiblich.")
 
-        # Jeweils bis zu 5 zufällige Stimmen wählen
         selected_m = random.sample(males, min(len(males), 5))
         selected_f = random.sample(females, min(len(females), 5))
         
@@ -64,22 +84,46 @@ class AudioEngine:
         save_path = os.path.join(self.root_dir, "resources", "voices", "generated")
         if not os.path.exists(save_path): os.makedirs(save_path)
 
+        self.log_to_file(f"Starte Batch-Generierung von {len(targets)} Stimmen...")
+
         count = 0
         for name, v_id in targets:
+            if self.stop_signal: break
+            
+            self.log_to_file(f"Generiere Stimme: {name}...")
             url = f"https://api.elevenlabs.io/v1/text-to-speech/{v_id}"
             headers = {"xi-api-key": api_key, "Content-Type": "application/json"}
-            data = {"text": ideal_text, "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}
+            data = {
+                "text": ideal_text, 
+                "model_id": "eleven_multilingual_v2", 
+                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
+            }
             
-            res = requests.post(url, json=data, headers=headers)
-            if res.status_code == 200:
-                with open(os.path.join(save_path, f"{name}.wav"), "wb") as f: f.write(res.content)
-                count += 1
-                if progress_callback: progress_callback(count, len(targets), f"Generiert: {name}")
-            time.sleep(0.5)
+            try:
+                # Auch hier: Timeout von 15 Sekunden pro Stimme
+                res = requests.post(url, json=data, headers=headers, timeout=15)
+                if res.status_code == 200:
+                    safe_name = "".join(x for x in name if x.isalnum() or x in "_-")
+                    with open(os.path.join(save_path, f"{safe_name}.wav"), "wb") as f: 
+                        f.write(res.content)
+                    count += 1
+                    if progress_callback: 
+                        progress_callback(count, len(targets), f"Fertig: {name}")
+                    self.log_to_file(f"Erfolgreich gespeichert: {name}")
+                else:
+                    self.log_to_file(f"Fehler bei {name}: {res.status_code}")
+            except Exception as e:
+                self.log_to_file(f"Exception bei {name}: {e}")
+                
+            time.sleep(1.0) # Kurze Pause zwischen den Anfragen
+            
+        self.log_to_file(f"Bibliotheksbau beendet. {count} Stimmen erstellt.")
         return count > 0
 
+    # --- RESTLICHE FUNKTIONEN (IDENTISCH) ---
     def load_local_tts(self):
         if self.tts is None:
+            self.log_to_file("Lade lokales XTTS Modell...")
             self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
 
     def set_volume(self, val):
@@ -116,13 +160,16 @@ class AudioEngine:
 
     def _producer_elevenlabs(self, text, voice_id, settings, on_progress):
         sentences = self._split(text)
+        api_key = settings.get("elevenlabs_api_key")
         for i, s in enumerate(sentences):
             if self.stop_signal: break
             url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
-            res = requests.post(url, json={"text": s, "model_id": "eleven_multilingual_v2"}, headers={"xi-api-key": settings.get("elevenlabs_api_key")})
-            if res.status_code == 200:
-                with open("temp_el.mp3", "wb") as f: f.write(res.content)
-                self.audio_queue.put((sf.read("temp_el.mp3")[0], 44100, i+1, len(sentences), s))
+            try:
+                res = requests.post(url, json={"text": s, "model_id": "eleven_multilingual_v2"}, headers={"xi-api-key": api_key}, timeout=15)
+                if res.status_code == 200:
+                    with open("temp_el.mp3", "wb") as f: f.write(res.content)
+                    self.audio_queue.put((sf.read("temp_el.mp3")[0], 44100, i+1, len(sentences), s))
+            except: pass
         self.audio_queue.put(None)
 
     def _split(self, text):
