@@ -11,8 +11,8 @@ class SettingsManager:
             "hotkey_pause": "f7",
             "debug_mode": True,
             "use_elevenlabs": False,
-            "elevenlabs_api_key": "",
-            "plugin_target_path": ""  # NEU: Pfad zur target.txt
+            "elevenlabs_api_keys": [], # NEU: Liste statt String
+            "plugin_target_path": ""
         }
         self.settings = self.load_settings()
 
@@ -22,7 +22,14 @@ class SettingsManager:
         try:
             with open(self.filepath, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                # Fehlende Keys ergänzen
+                
+                # MIGRATION: Alten Single-Key in neue Liste umwandeln
+                if "elevenlabs_api_key" in data and isinstance(data["elevenlabs_api_key"], str):
+                    if data["elevenlabs_api_key"].strip():
+                        data["elevenlabs_api_keys"] = [data["elevenlabs_api_key"]]
+                    del data["elevenlabs_api_key"] # Alten Key löschen
+                
+                # Fehlende Defaults ergänzen
                 for k, v in self.defaults.items():
                     if k not in data: data[k] = v
                 return data
