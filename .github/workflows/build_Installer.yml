@@ -1,0 +1,32 @@
+name: Manual Installer Build
+
+# Hier definieren wir, wann es losgeht:
+on:
+  # 'workflow_dispatch' bedeutet: Nur wenn ich den Knopf drücke!
+  workflow_dispatch:
+
+jobs:
+  build_installer:
+    runs-on: windows-latest
+
+    steps:
+    # 1. Code aus dem Repo holen
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    # 2. Inno Setup installieren (Windows Umgebung)
+    - name: Install Inno Setup
+      run: choco install innosetup
+
+    # 3. Den Installer bauen
+    # Der Befehl 'iscc' kompiliert dein setup.iss Skript
+    - name: Compile .ISS to .EXE
+      run: iscc "setup.iss"
+
+    # 4. Den fertigen Installer als Download bereitstellen
+    - name: Upload Installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: LQAG_Installer_Setup
+        # Dieser Pfad muss mit dem "OutputDir" in deiner setup.iss übereinstimmen!
+        path: Output/LQAG_Installer.exe
