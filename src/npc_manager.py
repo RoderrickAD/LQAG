@@ -2,6 +2,7 @@ import json
 import os
 import random
 import re
+import datetime
 
 class NpcManager:
     def __init__(self):
@@ -10,13 +11,24 @@ class NpcManager:
         self.assignments_path = os.path.join(self.root_dir, "resources", "voices-assignments.json")
         self.generated_dir = os.path.join(self.root_dir, "resources", "voices", "generated")
         self.npc_list_path = os.path.join(self.root_dir, "resources", "npc_lists.txt")
-        
-        # Standard-Pfad
         self.default_target_path = os.path.join(self.root_dir, "resources", "npc_lists", "target.txt")
         
+        # Debug Log Pfad
+        self.debug_log_path = os.path.join(self.root_dir, "debug", "npc_gender_log.txt")
+        if not os.path.exists(os.path.dirname(self.debug_log_path)):
+            os.makedirs(os.path.dirname(self.debug_log_path))
+
         self.current_target = "Unbekannt"
         self.npc_database = self.load_npc_database()
         self.assignments = self.load_assignments()
+
+    def log_debug(self, msg):
+        """Schreibt Debug-Infos in eine Datei"""
+        try:
+            ts = datetime.datetime.now().strftime("%H:%M:%S")
+            with open(self.debug_log_path, "a", encoding="utf-8") as f:
+                f.write(f"[{ts}] {msg}\n")
+        except: pass
 
     def load_npc_database(self):
         db = {}
@@ -24,11 +36,12 @@ class NpcManager:
             try:
                 with open(self.npc_list_path, "r", encoding="utf-8") as f:
                     for line in f:
-                        # Verbesserte Regex: Erlaubt Leerzeichen vor der Klammer "Name [m]"
+                        # Regex liest Name und Gender
                         match = re.search(r"^(.*?)\s*\[([mf])\]", line.strip())
                         if match:
                             name, gender = match.groups()
-                            db[name.strip()] = gender
+                            # WICHTIG: Wir speichern alles in KLEINBUCHSTABEN für den Vergleich
+                            db[name.strip().lower()] = gender.lower()
             except: pass
         return db
 
@@ -47,7 +60,6 @@ class NpcManager:
         except: pass
 
     def update(self, custom_path=""):
-        """Liest die Datei und nimmt NUR die letzte Zeile"""
         file_to_read = custom_path if (custom_path and os.path.exists(custom_path)) else self.default_target_path
         
         if os.path.exists(file_to_read):
@@ -57,62 +69,80 @@ class NpcManager:
                     if content:
                         lines = content.splitlines()
                         last_entry = lines[-1].strip()
-                        if last_entry:
+                        if last_entry and last_entry != self.current_target:
                             self.current_target = last_entry
+                            self.log_debug(f"Neuer NPC erkannt: '{self.current_target}'")
             except: pass
 
     def get_voice_path(self):
         name = self.current_target
+        # Vergleich in Kleinbuchstaben, damit "Gandalf" == "gandalf"
+        name_lower = name.lower()
         
-        # Welches Geschlecht erwarten wir? (Standard: male)
-        expected_gender = self.npc_database.get(name, "m")
+        # 1. Geschlecht ermitteln
+        # Standard ist "m", falls nicht gefunden
+        expected_gender = self.npc_database.get(name_lower, "m")
+        
+        self.log_debug(f"Analysiere '{name}': Erwartetes Geschlecht = {expected_gender}")
 
-        # Prüfen, ob eine Zuweisung existiert
+        # 2. Prüfen ob Zuweisung existiert
         if name in self.assignments:
             assigned_file = self.assignments[name]
             
-            # --- DER FIX: GENDER CHECK ---
-            # Wenn Datei existiert, prüfen wir, ob das Geschlecht stimmt
             if os.path.exists(assigned_file):
                 filename = os.path.basename(assigned_file).lower()
                 
-                # Wenn NPC männlich ist, aber Datei "female_" heißt -> NEU ZUWEISEN!
+                # CHECK: Ist es die falsche Stimme?
+                wrong_voice = False
                 if expected_gender == "m" and "female_" in filename:
-                    return self.auto_assign_new_voice(name)
+                    self.log_debug(f"FEHLER: '{name}' ist Mann, hat aber Frauenstimme ({filename}). Korrigiere...")
+                    wrong_voice = True
+                elif expected_gender == "f" and "male_" in filename:
+                    self.log_debug(f"FEHLER: '{name}' ist Frau, hat aber Männerstimme ({filename}). Korrigiere...")
+                    wrong_voice = True
                 
-                # Wenn NPC weiblich ist, aber Datei "male_" heißt -> NEU ZUWEISEN!
-                if expected_gender == "f" and "male_" in filename:
-                    return self.auto_assign_new_voice(name)
-                    
-                # Alles gut, behalte die Stimme
-                return assigned_file
+                if not wrong_voice:
+                    # Alles okay
+                    return assigned_file
         
-        # Keine Zuweisung oder Datei fehlt -> Neu machen
-        return self.auto_assign_new_voice(name)
+        # 3. Wenn wir hier sind, brauchen wir eine neue Stimme
+        self.log_debug(f"Weise neue Stimme zu für '{name}'...")
+        return self.auto_assign_new_voice(name, expected_gender)
 
-    def auto_assign_new_voice(self, npc_name):
-        if not os.path.exists(self.generated_dir): return ""
+    def auto_assign_new_voice(self, npc_name, gender):
+        if not os.path.exists(self.generated_dir): 
+            self.log_debug("FEHLER: Ordner 'generated' existiert nicht!")
+            return ""
+            
         all_files = [os.path.join(self.generated_dir, f) for f in os.listdir(self.generated_dir) if f.endswith(".wav")]
-        if not all_files: return ""
-
-        gender = self.npc_database.get(npc_name, "m")
         
-        # Listen filtern
+        if not all_files:
+            self.log_debug("FEHLER: Keine .wav Dateien im generated Ordner gefunden!")
+            return ""
+
+        # Filtern
         males = [f for f in all_files if "male_" in os.path.basename(f).lower()]
         females = [f for f in all_files if "female_" in os.path.basename(f).lower()]
+        
+        self.log_debug(f"Verfügbare Stimmen: {len(males)} Männer, {len(females)} Frauen.")
 
         chosen = ""
         
-        # Logik: Versuche passendes Geschlecht zu finden
+        # Auswahl Logik
         if gender == "f":
             if females: chosen = random.choice(females)
-            elif males: chosen = random.choice(males) # Notfall: Mann
+            elif males: 
+                chosen = random.choice(males)
+                self.log_debug("WARNUNG: Keine Frauenstimme da, nehme Mann als Notfall.")
             else: chosen = random.choice(all_files)
         else: # Male
             if males: chosen = random.choice(males)
-            elif females: chosen = random.choice(females) # Notfall: Frau
+            elif females: 
+                chosen = random.choice(females)
+                self.log_debug("WARNUNG: Keine Männerstimme da, nehme Frau als Notfall.")
             else: chosen = random.choice(all_files)
 
         self.assignments[npc_name] = chosen
         self.save_assignments()
+        self.log_debug(f"Zugewiesen: {os.path.basename(chosen)}")
         return chosen
